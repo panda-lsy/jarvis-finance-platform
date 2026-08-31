@@ -110,8 +110,10 @@ let jdKlineChart = null
 async function loadJdKline() {
   try {
     const d = await api.jdKline(jdKlineCfg.market, jdKlineCfg.interval, jdKlineCfg.limit)
-    jdKlineRange.value = d.data?.range || null
-    renderJdKline(jdKlineRef, d.data?.data || [])
+    // 兼容两种返回: 后端裸结构 {market,count,range,data} 或 ApiResponse {code,message,data:{...}}
+    const body = d?.data && d.data.data ? d.data : d
+    jdKlineRange.value = body?.range || null
+    renderJdKline(jdKlineRef, body?.data || [])
   } catch (e) { /* 忽略 */ }
 }
 
