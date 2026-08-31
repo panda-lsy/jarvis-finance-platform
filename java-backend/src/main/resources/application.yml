@@ -29,6 +29,11 @@ jarvis:
   python-service:
     enabled: true
     base-url: http://127.0.0.1:8100
+  # JWT 认证
+  jwt:
+    # 生产环境务必覆盖, 至少32字符
+    secret: ${JWT_SECRET:jarvis-fi-secret-key-please-change-in-prod-0123456789}
+    expiration-ms: 86400000  # 24h
 
 # AI 大模型多协议适配 (DeepSeek 远程 API)
 ai:

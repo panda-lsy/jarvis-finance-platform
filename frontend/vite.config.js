@@ -7,10 +7,10 @@ export default defineConfig({
   plugins: [vue()],
   server: {
     port: 5173,
-    // 本地开发代理到本机后端, 避免跨域
+    // 本地开发代理到 Java 主后端, 避免跨域
     proxy: {
       '/api': {
-        target: 'http://127.0.0.1:8100',
+        target: 'http://127.0.0.1:8200',
         changeOrigin: true
       }
     }
