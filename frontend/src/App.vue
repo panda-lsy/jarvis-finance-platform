@@ -338,7 +338,7 @@ onMounted(async () => {
       </section>
 
       <footer class="foot">
-        <span>后端: {{ API_BASE ? API_BASE : '(开发代理 /api → :8200)' }}</span>
+        <span>贾维斯金融投研平台 · 仅供研究参考，不构成投资建议</span>
       </footer>
     </template>
   </div>

@@ -7,6 +7,7 @@ const trades = ref([])
 const loading = ref(true)
 const msg = ref('')
 const msgType = ref('info')
+const realtimePrices = ref(null)
 
 const order = reactive({
   symbol: 'sh518850',
@@ -17,7 +18,9 @@ const order = reactive({
 
 async function load() {
   try {
-    const [acc, tr] = await Promise.all([api.simAccount(), api.simTrades(20)])
+    const [acc, tr, rt] = await Promise.all([
+      api.simAccount(), api.simTrades(20), loadRealtime(),
+    ])
     account.value = acc.data
     trades.value = tr.data?.trades || []
   } catch (e) {
@@ -26,6 +29,13 @@ async function load() {
   } finally {
     loading.value = false
   }
+}
+
+async function loadRealtime() {
+  try {
+    const d = await api.marketPrices()
+    realtimePrices.value = d.data || null
+  } catch (e) { /* 忽略 */ }
 }
 
 async function submitOrder() {
@@ -75,6 +85,20 @@ onMounted(load)
 
 <template>
   <div class="sim">
+    <!-- 实时价格 (黄金ETF + 伦敦金) -->
+    <div v-if="realtimePrices" class="rt-grid">
+      <div v-for="(m, key) in realtimePrices" :key="key" class="rt-card">
+        <div class="rt-name">{{ m.name }}</div>
+        <div class="rt-price">{{ fmt(m.price) }}</div>
+        <div class="rt-sub">
+          <span :class="(m.change || 0) >= 0 ? 'pos' : 'neg'">
+            {{ m.change }} ({{ fmtPct(m.change_pct) }})
+          </span>
+          <span class="rt-muted">昨收 {{ m.prev_close }}</span>
+        </div>
+      </div>
+    </div>
+
     <!-- 账户概览 -->
     <div v-if="account" class="cards">
       <div class="card">
@@ -188,6 +212,13 @@ onMounted(load)
 
 <style scoped>
 .sim { display: flex; flex-direction: column; gap: 20px; }
+.rt-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.rt-card { background: #0f1626; border: 1px solid #243453; border-radius: 12px; padding: 18px 20px; position: relative; overflow: hidden; }
+.rt-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px; background: linear-gradient(90deg, #4da8ff, #a842ff); }
+.rt-name { color: #8ba0c8; font-size: 13px; margin-bottom: 6px; }
+.rt-price { font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.rt-sub { display: flex; align-items: center; gap: 12px; margin-top: 6px; font-size: 13px; }
+.rt-muted { color: #5a6b8c; font-size: 12px; }
 .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 16px; }
 .card { background: #121a2d; border: 1px solid #243453; border-radius: 12px; padding: 18px 20px; }
 .card-title { color: #8ba0c8; font-size: 13px; margin-bottom: 8px; }
