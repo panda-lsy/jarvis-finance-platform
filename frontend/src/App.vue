@@ -4,6 +4,8 @@ import * as echarts from 'echarts'
 import { api, auth, API_BASE } from './api/client'
 import LoginView from './components/LoginView.vue'
 import SimTradeView from './components/SimTradeView.vue'
+import AiCenter from './components/AiCenter.vue'
+import OpsView from './components/OpsView.vue'
 
 // ---- 登录态 ----
 const user = ref(null)
@@ -18,7 +20,7 @@ function logout() {
 }
 
 // ---- Tab ----
-const tabs = ['行情', '回测', '模拟盘']
+const tabs = ['行情', '回测', '模拟盘', 'AI中心', '运维']
 const activeTab = ref('行情')
 function switchTab(name) {
   activeTab.value = name
@@ -233,6 +235,16 @@ onMounted(async () => {
       <!-- 模拟盘 -->
       <section v-show="activeTab === '模拟盘'">
         <SimTradeView />
+      </section>
+
+      <!-- AI 中心 -->
+      <section v-show="activeTab === 'AI中心'" class="panel-wrap">
+        <AiCenter />
+      </section>
+
+      <!-- 运维监控 -->
+      <section v-show="activeTab === '运维'" class="panel-wrap">
+        <OpsView />
       </section>
 
       <footer class="foot">

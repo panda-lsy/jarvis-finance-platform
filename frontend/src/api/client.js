@@ -61,7 +61,7 @@ export const api = {
   // 模拟盘 (需登录)
   simAccount: () => get(API_BASE, '/api/sim/account'),
   simTrades: (limit) => get(API_BASE, '/api/sim/trades', { limit }),
-  simOrder: (type, symbol, quantity) => post(API_BASE, '/api/sim/order', { type, symbol, quantity }),
+  simOrder: (type, symbol, quantity, leverage) => post(API_BASE, '/api/sim/order', { type, symbol, quantity, leverage: leverage || 1 }),
 
   // ===== Python 后端 (行情 + AI) =====
   // 行情
