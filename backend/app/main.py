@@ -79,6 +79,52 @@ def jd_snapshots(limit: int = 60):
     return {"code": 200, "message": "ok", "data": out}
 
 
+@app.get("/api/jd/kline")
+def jd_kline(
+    market: str = Query("zheshang", description="zheshang / minsheng"),
+    interval: int = Query(5, description="K线周期(分钟): 1/5/15/30/60"),
+    limit: int = Query(200, ge=1, le=2000),
+):
+    """京东积存金分钟K线: 由每分钟持久化快照聚合生成
+    前端绘制K线时请求本接口
+    """
+    key = f"jd_{market}"
+    snaps = store.get_snapshots(key, limit=2000)
+    if not snaps:
+        return {"market": market, "interval": interval, "count": 0, "data": []}
+
+    from datetime import datetime as _dt
+
+    # 按 interval 分钟对齐桶, 聚合 OHLC
+    buckets = {}
+    for s in snaps:
+        try:
+            t = _dt.fromisoformat(s["ts"])
+        except Exception:
+            continue
+        bucket_ts = (int(t.timestamp()) // (interval * 60)) * (interval * 60)
+        bar = buckets.setdefault(bucket_ts, {"open": None, "high": None, "low": None, "close": None, "ts": bucket_ts * 1000})
+        p = float(s["price"])
+        bar["open"] = p if bar["open"] is None else bar["open"]
+        bar["high"] = p if bar["high"] is None else max(bar["high"], p)
+        bar["low"] = p if bar["low"] is None else min(bar["low"], p)
+        bar["close"] = p
+
+    bars = sorted(buckets.values(), key=lambda b: b["ts"])
+    # 转换日期格式 (与现有K线一致)
+    for b in bars:
+        b["date"] = _dt.fromtimestamp(b["ts"] / 1000).strftime("%Y-%m-%d %H:%M")
+        b["volume"] = 0
+    out = bars[-limit:]
+    return {
+        "market": market,
+        "interval": interval,
+        "count": len(out),
+        "range": {"min": out[0]["date"] if out else None, "max": out[-1]["date"] if out else None, "count": len(out)},
+        "data": out,
+    }
+
+
 @app.get("/api/markets")
 def markets():
     """支持的标的一览"""

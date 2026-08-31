@@ -56,39 +56,90 @@ async function loadRealtime() {
   } catch (e) { /* 忽略, 不阻塞K线 */ }
 }
 
-// ---- 京东积存金实时金价 (旧京东源: 浙商+民生, WS 每分钟推送) ----
+// ---- 京东积存金实时金价 (前端直连京东HTTP, 经 nginx /jd/ 同域反代) ----
+// 后端每分钟抓取持久化 -> 前端画K线时请求 /api/jd/kline
 const jdPrices = ref(null)
-const jdWsState = ref('连接中')
+const jdLiveState = ref('连接中')
 const lastJdTime = ref('')
-let jdWs = null
-let jdReconnectTimer = null
+let jdPollTimer = null
+const JD_SOURCES = [
+  { key: 'zheshang', label: '浙商积存金', name: 'gw2/generic/jrm/h5/m/stdLatestPrice', sku: '1961543816' },
+  { key: 'minsheng', label: '民生积存金', name: 'gw/generic/hj/h5/m/latestPrice', sku: 'P005' },
+]
 
-function jdWsUrl() {
-  return API_BASE.replace(/^http/, 'ws') + '/py/ws/prices'
+function parseJdRate(raw) {
+  // 京东返回 "-0.45%" 或 "0"
+  const s = String(raw ?? '0').replace('%', '')
+  const n = parseFloat(s)
+  return Number.isFinite(n) ? n : 0
 }
 
-function connectJdWs() {
-  try {
-    jdWs = new WebSocket(jdWsUrl())
-    jdWs.onopen = () => { jdWsState.value = '已连接' }
-    jdWs.onmessage = (ev) => {
-      try {
-        const d = JSON.parse(ev.data)
-        if (d.type === 'prices' && d.prices) {
-          jdPrices.value = d.prices
-          lastJdTime.value = d.timestamp || ''
-        }
-      } catch (e) { /* 忽略非JSON */ }
-    }
-    jdWs.onclose = () => {
-      jdWsState.value = '已断开, 5秒后重连'
-      clearTimeout(jdReconnectTimer)
-      jdReconnectTimer = setTimeout(connectJdWs, 5000)
-    }
-    jdWs.onerror = () => { try { jdWs.close() } catch (e) {} }
-  } catch (e) {
-    jdWsState.value = '连接失败'
+async function loadJdLive() {
+  const out = {}
+  let okCount = 0
+  await Promise.all(JD_SOURCES.map(async (src) => {
+    try {
+      const d = await api.jdLive(src.name, src.sku)
+      const datas = d?.resultData?.datas
+      if (!d?.success || !datas) return
+      const price = parseFloat(datas.price)
+      if (!Number.isFinite(price)) return
+      okCount++
+      const tsMs = parseInt(datas.time, 10) || 0
+      out[src.key] = {
+        source: src.key,
+        label: src.label,
+        price,
+        yesterday_price: parseFloat(datas.yesterdayPrice || datas.price),
+        change: parseFloat(datas.upAndDownAmt || 0),
+        change_pct: parseJdRate(datas.upAndDownRate),
+        time: tsMs ? new Date(tsMs).toLocaleString('zh-CN', { hour12: false }) : '',
+      }
+    } catch (e) { /* 单源失败不影响另一源 */ }
+  }))
+  if (okCount > 0) {
+    jdPrices.value = out
+    jdLiveState.value = '直连京东 ✓'
+  } else {
+    jdLiveState.value = '京东接口暂不可达'
   }
+}
+
+// ---- 京东K线 (请求后端, 由每分钟持久化快照聚合) ----
+const jdKlineCfg = reactive({ market: 'zheshang', interval: 5, limit: 200 })
+const jdKlineRef = ref(null)
+const jdKlineRange = ref(null)
+let jdKlineChart = null
+
+async function loadJdKline() {
+  try {
+    const d = await api.jdKline(jdKlineCfg.market, jdKlineCfg.interval, jdKlineCfg.limit)
+    jdKlineRange.value = d.data?.range || null
+    renderJdKline(jdKlineRef, d.data?.data || [])
+  } catch (e) { /* 忽略 */ }
+}
+
+function renderJdKline(elRef, data) {
+  if (!elRef.value) return
+  if (!jdKlineChart) {
+    jdKlineChart = echarts.init(elRef.value)
+  }
+  jdKlineChart.setOption({
+    backgroundColor: 'transparent',
+    grid: { left: 8, right: 8, top: 16, bottom: 8, containLabel: true },
+    tooltip: {
+      trigger: 'axis', axisPointer: { type: 'cross' },
+      backgroundColor: '#0f1626', borderColor: '#243453', textStyle: { color: '#e9effb' },
+    },
+    xAxis: { type: 'category', data: data.map(b => b.date), axisLine: { lineStyle: { color: '#243453' } }, axisLabel: { color: '#8ba0c8' } },
+    yAxis: { scale: true, axisLine: { lineStyle: { color: '#243453' } }, axisLabel: { color: '#8ba0c8', formatter: v => v.toFixed(2) } },
+    dataZoom: [{ type: 'inside' }, { type: 'slider', height: 14, bottom: 0 }],
+    series: [{
+      type: 'candlestick',
+      data: data.map(b => [b.open, b.close, b.low, b.high]),
+      itemStyle: { color: '#27c46b', color0: '#ef5350', borderColor: '#27c46b', borderColor0: '#ef5350' },
+    }],
+  }, true)
 }
 
 // ---- 回测状态 ----
@@ -225,18 +276,19 @@ function fmtPct(n) { return n == null ? '-' : Number(n).toFixed(2) + '%' }
 
 onMounted(async () => {
   if (auth.isLoggedIn()) user.value = { email: '已登录' }
-  await Promise.all([loadKline(), loadRealtime()])
-  connectJdWs()
+  await Promise.all([loadKline(), loadRealtime(), loadJdKline()])
+  loadJdLive()
+  jdPollTimer = setInterval(loadJdLive, 30000)
   window.addEventListener('resize', () => {
     klineEtfChart && klineEtfChart.resize()
     klineLondonChart && klineLondonChart.resize()
     equityChart && equityChart.resize()
+    jdKlineChart && jdKlineChart.resize()
   })
 })
 
 onUnmounted(() => {
-  clearTimeout(jdReconnectTimer)
-  if (jdWs) { try { jdWs.close() } catch (e) {} }
+  clearInterval(jdPollTimer)
 })
 </script>
 
@@ -270,11 +322,11 @@ onUnmounted(() => {
 
       <!-- 行情: 上排实时价格(左右), 下排K线(各占一整行) -->
       <section v-show="activeTab === '行情'" class="panel-wrap">
-        <!-- 京东积存金实时金价 (WS 每分钟推送) -->
+        <!-- 京东积存金实时金价 (前端直连京东HTTP) -->
         <div v-if="jdPrices" class="jd-bar">
           <div class="jd-title">
             京东积存金实时价
-            <span class="jd-ws" :class="jdWsState === '已连接' ? 'ok' : 'bad'">● {{ jdWsState }}</span>
+            <span class="jd-ws" :class="jdLiveState === '直连京东 ✓' ? 'ok' : 'bad'">● {{ jdLiveState }}</span>
           </div>
           <div class="jd-grid">
             <div v-for="(p, key) in jdPrices" :key="key" class="jd-card">
@@ -288,7 +340,35 @@ onUnmounted(() => {
               </div>
             </div>
           </div>
-          <div v-if="lastJdTime" class="jd-hint">更新 {{ lastJdTime }}</div>
+        </div>
+
+        <!-- 京东积存金K线 (后端实时聚合) -->
+        <div class="panel kline-card">
+          <div class="panel-head">
+            <h2>京东积存金 K线</h2>
+            <div class="kline-ctrl">
+              <select v-model="jdKlineCfg.market" @change="loadJdKline" class="select">
+                <option value="zheshang">浙商积存金</option>
+                <option value="minsheng">民生积存金</option>
+              </select>
+              <select v-model.number="jdKlineCfg.interval" @change="loadJdKline" class="select">
+                <option :value="1">1分</option>
+                <option :value="5">5分</option>
+                <option :value="15">15分</option>
+                <option :value="30">30分</option>
+                <option :value="60">60分</option>
+              </select>
+              <select v-model.number="jdKlineCfg.limit" @change="loadJdKline" class="select">
+                <option :value="100">100 根</option>
+                <option :value="200">200 根</option>
+                <option :value="500">500 根</option>
+              </select>
+            </div>
+          </div>
+          <div ref="jdKlineRef" class="chart jd-chart"></div>
+          <div v-if="jdKlineRange" class="hint">
+            区间 {{ jdKlineRange.min }} ~ {{ jdKlineRange.max }} ({{ jdKlineRange.count }} 根)
+          </div>
         </div>
 
         <!-- 上排: 实时价格 Card (左右两个) -->
@@ -434,6 +514,7 @@ onUnmounted(() => {
 .jd-price { font-size: 26px; font-weight: 700; color: #f5c542; font-variant-numeric: tabular-nums; margin: 2px 0; }
 .jd-sub { display: flex; gap: 12px; align-items: center; font-size: 13px; }
 .jd-hint { font-size: 12px; color: #6b7fa3; margin-top: 8px; text-align: right; }
+.jd-chart { height: 300px; margin-top: 12px; }
 @media (max-width: 900px) {
   .dual-grid, .jd-grid { grid-template-columns: 1fr; }
   .jd-bar { padding: 12px; }

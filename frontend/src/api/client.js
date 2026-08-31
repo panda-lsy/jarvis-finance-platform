@@ -73,4 +73,9 @@ export const api = {
   // AI (DeepSeek, Python 直连)
   aiStatus: () => get(API_PY, '/api/ai/capabilities'),
   aiChat: (messages) => post(API_PY, '/api/ai/chat', { messages }),
+
+  // ===== 京东积存金 (前端直连京东HTTP, nginx /jd/ 同域反代避免CORS) =====
+  jdLive: (name, productSku) => get(API_BASE, '/jd/' + name, { productSku }),
+  // 京东分钟K线: 由后端每分钟持久化快照聚合 (前端绘制K线时请求)
+  jdKline: (market, interval, limit) => get(API_PY, '/api/jd/kline', { market, interval, limit }),
 }
