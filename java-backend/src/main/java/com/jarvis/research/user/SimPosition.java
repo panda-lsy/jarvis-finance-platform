@@ -39,6 +39,18 @@ public class SimPosition {
     @Column(name = "avg_cost", nullable = false)
     private Double avgCost = 0.0;
 
+    /** 杠杆倍数 (1.0 = 全款买入; >1 为杠杆) */
+    @Column(name = "leverage")
+    private Double leverage = 1.0;
+
+    /** 借款金额 (杠杆部分) */
+    @Column(name = "loan_amount")
+    private Double loanAmount = 0.0;
+
+    /** 累计投入保证金 */
+    @Column(name = "margin_used")
+    private Double marginUsed = 0.0;
+
     @Column(name = "updated_at")
     private LocalDateTime updatedAt;
 

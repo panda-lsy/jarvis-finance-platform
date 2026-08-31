@@ -18,9 +18,9 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-DEEPSEEK_BASE = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
-DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
-API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
+DEEPSEEK_BASE = os.getenv("DEEPSEEK_BASE_URL", "https://ollama.com/v1")
+DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash:0731")
+API_KEY = os.getenv("DEEPSEEK_API_KEY", os.getenv("OLLAMA_API_KEY", ""))
 TIMEOUT = int(os.getenv("DEEPSEEK_TIMEOUT", "60"))
 
 # 系统提示词 - 金融投研助手

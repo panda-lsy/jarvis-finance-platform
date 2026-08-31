@@ -35,6 +35,14 @@ public class SimAccount {
     @Column(name = "cash", nullable = false)
     private Double cash = 100000.0;
 
+    /** 借款余额 (杠杆借入总额) */
+    @Column(name = "loan_balance")
+    private Double loanBalance = 0.0;
+
+    /** 冻结保证金 (杠杆持仓占用) */
+    @Column(name = "frozen_margin")
+    private Double frozenMargin = 0.0;
+
     /** 账户状态: ACTIVE / FROZEN / CLOSED */
     @Column(nullable = false, length = 20)
     private String status = "ACTIVE";

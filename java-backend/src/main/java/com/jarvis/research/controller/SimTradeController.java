@@ -21,7 +21,7 @@ public class SimTradeController {
 
     private final SimTradeService simTradeService;
 
-    /** 下单 */
+    /** 下单 (支持杠杆) */
     @PostMapping("/order")
     public ApiResponse<Map<String, Object>> order(@RequestBody Map<String, Object> req) {
         Long userId = CurrentUser.id();
@@ -29,7 +29,9 @@ public class SimTradeController {
         String symbol = (String) req.getOrDefault("symbol", "sh518850");
         double quantity = req.get("quantity") instanceof Number
                 ? ((Number) req.get("quantity")).doubleValue() : 0;
-        return ApiResponse.ok(simTradeService.placeOrder(userId, type, symbol, quantity),
+        double leverage = req.get("leverage") instanceof Number
+                ? ((Number) req.get("leverage")).doubleValue() : 1.0;
+        return ApiResponse.ok(simTradeService.placeOrder(userId, type, symbol, quantity, leverage),
                 "下单成功");
     }
 
