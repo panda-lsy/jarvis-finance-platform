@@ -1,9 +1,9 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 
-// GitHub Pages 部署在 /jarvis-finance-platform/ 子路径下 (仓库名)
+// GitHub Pages 部署: 自定义域名 f.shengxia.me 映射到根路径, 故 base='/' (根路径部署)
 export default defineConfig({
-  base: '/jarvis-finance-platform/',
+  base: '/',
   plugins: [vue()],
   server: {
     port: 5173,
