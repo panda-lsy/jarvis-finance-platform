@@ -1,19 +1,21 @@
 /*
  * API 客户端 (支持登录认证)
  * 后端地址:
- *  - 本地开发: vite proxy → http://127.0.0.1:8200 (Java主后端)
- *  - 生产(GitHub Pages): ?api=http://<本机IP>:8200 指定
+ *  - 生产: 硬编码 https://agent.shengxia.me (nginx /api/ 反代到 Java后端 8200, 经 CloudFlare)
+ *  - 本地开发: vite proxy → http://127.0.0.1:8200
  */
 const TOKEN_KEY = 'jarvis_token'
 
+// 生产后端地址 (nginx /api/ 反代, CloudFlare 域名)
+const PROD_API = 'https://agent.shengxia.me'
+
 function resolveApiBase() {
-  const params = new URLSearchParams(window.location.search)
-  const fromUrl = params.get('api')
-  if (fromUrl) return fromUrl.replace(/\/$/, '')
+  // 本地开发(通过vite代理)走空串
   if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-    return ''  // 开发走 vite 代理
+    return ''
   }
-  return ''
+  // 生产: 硬编码后端地址
+  return PROD_API
 }
 
 export const API_BASE = resolveApiBase()
