@@ -32,12 +32,22 @@ const connected = ref(false)
 const rangeInfo = ref(null)
 const limit = ref(120)
 const realtimePrices = ref(null)   // 黄金ETF + 伦敦金 实时价
+const activeMarket = ref('gold_etf')  // 当前K线标的
+const markets = [
+  { key: 'gold_etf', label: '黄金ETF华夏', symbol: 'sh518850' },
+  { key: 'london_gold', label: '伦敦金(现货黄金)', symbol: 'hf_XAU' },
+]
 
 async function loadRealtime() {
   try {
     const d = await api.allPrices()
     realtimePrices.value = d.data?.prices || null
   } catch (e) { /* 忽略, 不阻塞K线 */ }
+}
+
+function switchMarket(key) {
+  activeMarket.value = key
+  loadKline()
 }
 
 // ---- 回测状态 ----
@@ -53,7 +63,8 @@ let equityChart = null
 // ---- 行情/回测 ----
 async function loadKline() {
   try {
-    const d = await api.goldKline({ market: 'gold_etf', limit: limit.value, symbol: 'sh518850' })
+    const m = markets.find(x => x.key === activeMarket.value) || markets[0]
+    const d = await api.goldKline({ market: activeMarket.value, limit: limit.value, symbol: m.symbol })
     let data = Array.isArray(d.data) ? d.data : (d.data?.data || [])
     rangeInfo.value = d.data?.range
     renderKline(data)
@@ -194,7 +205,8 @@ onMounted(async () => {
       <section v-show="activeTab === '行情'" class="panel-wrap">
         <!-- 实时价格面板: 黄金ETF + 伦敦金 -->
         <div v-if="realtimePrices" class="rt-grid">
-          <div v-for="(m, key) in realtimePrices" :key="key" class="rt-card">
+          <div v-for="(m, key) in realtimePrices" :key="key"
+               class="rt-card" :class="{ active: activeMarket === key }" @click="switchMarket(key)">
             <div class="rt-name">{{ m.label }}</div>
             <div class="rt-price">{{ fmt(m.realtime?.price) }}</div>
             <div class="rt-sub">
@@ -208,14 +220,19 @@ onMounted(async () => {
 
         <div class="panel">
           <div class="panel-head">
-            <h2>黄金ETF历史K线</h2>
+            <h2>{{ (markets.find(x => x.key === activeMarket) || markets[0]).label }} 历史K线</h2>
+            <div class="mk-switch">
+              <button v-for="m in markets" :key="m.key"
+                      :class="['mk-btn', activeMarket === m.key ? 'active' : '']"
+                      @click="switchMarket(m.key)">{{ m.label }}</button>
+            </div>
             <select v-model.number="limit" @change="loadKline" class="select">
               <option :value="60">60 日</option>
               <option :value="120">120 日</option>
             </select>
           </div>
           <div ref="klineRef" class="chart tall"></div>
-          <div v-if="rangeInfo" class="hint">区间 {{ rangeInfo.min }} ~ {{ rangeInfo.max }} ({{ rangeInfo.count }} 根, 本机持久化)</div>
+          <div v-if="rangeInfo" class="hint">区间 {{ rangeInfo.min }} ~ {{ rangeInfo.max }} ({{ rangeInfo.count }} 根)</div>
         </div>
       </section>
 
@@ -292,12 +309,17 @@ onMounted(async () => {
 .tab-btn.active { background: linear-gradient(135deg, #4da8ff, #a842ff); color: #fff; border-color: transparent; }
 .panel-wrap { margin-top: 4px; }
 .rt-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin-bottom: 16px; }
-.rt-card { background: #121a2d; border: 1px solid #243453; border-radius: 12px; padding: 18px 20px; position: relative; overflow: hidden; }
+.rt-card { background: #121a2d; border: 1px solid #243453; border-radius: 12px; padding: 18px 20px; position: relative; overflow: hidden; cursor: pointer; transition: border-color .2s, box-shadow .2s; }
+.rt-card:hover { border-color: #4da8ff; }
+.rt-card.active { border-color: #4da8ff; box-shadow: 0 0 0 1px #4da8ff, 0 0 18px rgba(77,168,255,.2); }
 .rt-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px; background: linear-gradient(90deg, #4da8ff, #a842ff); }
 .rt-name { color: #8ba0c8; font-size: 13px; margin-bottom: 6px; }
 .rt-price { font-size: 30px; font-weight: 700; color: #e9effb; font-variant-numeric: tabular-nums; }
 .rt-sub { display: flex; align-items: center; gap: 12px; margin-top: 6px; font-size: 13px; }
 .rt-muted { color: #5a6b8c; font-size: 12px; }
+.mk-switch { display: flex; gap: 8px; }
+.mk-btn { background: #0f1626; border: 1px solid #243453; color: #8ba0c8; border-radius: 6px; padding: 7px 14px; cursor: pointer; font-size: 13px; }
+.mk-btn.active { background: linear-gradient(135deg, #4da8ff, #a842ff); border-color: transparent; color: #fff; font-weight: 600; }
 .panel { background: #121a2d; border: 1px solid #243453; border-radius: 12px; padding: 20px; }
 .panel-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
 .panel-head h2 { margin: 0; font-size: 18px; color: #e9effb; }

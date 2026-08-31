@@ -98,7 +98,11 @@ def fetch_kline(symbol: str = "sh518850", count: int = 120, fq: str = "qfq") -> 
     """
     获取历史日K线。
     返回字段: date, open, close, high, low, volume
+    兼容: A股/ETF(腾讯) 与 伦敦金/国际金(新浪)
     """
+    # 伦敦金/国际金: 用新浪接口
+    if symbol.startswith("hf_") or symbol.upper() in ("XAU", "XAUUSD"):
+        return _fetch_london_kline(symbol, count)
     try:
         s = _session()
         param = f"{symbol},day,,,{count},{fq}"
@@ -120,6 +124,34 @@ def fetch_kline(symbol: str = "sh518850", count: int = 120, fq: str = "qfq") -> 
         return out
     except Exception as e:
         logger.warning("kline fetch failed %s: %s", symbol, e)
+        return []
+
+
+def _fetch_london_kline(symbol: str, count: int) -> List[Dict]:
+    """伦敦金/国际金日K (新浪 GlobalFuturesService)"""
+    try:
+        s = _session()
+        s.headers.update({"Referer": "https://finance.sina.com.cn"})
+        url = "https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var%20_=/GlobalFuturesService.getGlobalFuturesDailyKLine"
+        resp = s.get(url, params={"symbol": "XAU"}, timeout=12)
+        import re, json as _json
+        m = re.search(r"\(\[(.*)\]\)", resp.text, re.S)
+        if not m:
+            return []
+        data = _json.loads("[" + m.group(1) + "]")
+        out = []
+        for k in data[-count:]:
+            out.append({
+                "date": k["date"],
+                "open": float(k["open"]),
+                "close": float(k["close"]),
+                "high": float(k["high"]),
+                "low": float(k["low"]),
+                "volume": float(k.get("volume", 0) or 0),
+            })
+        return out
+    except Exception as e:
+        logger.warning("london kline fetch failed %s: %s", symbol, e)
         return []
 
 

@@ -86,7 +86,17 @@ def kline(
     start: Optional[str] = None,
     end: Optional[str] = None,
 ):
-    """历史K线 (SQLite 持久化数据)"""
+    """历史K线
+    - gold_etf: SQLite 持久化数据
+    - london_gold: 新浪实时抓取 (伦敦金)
+    """
+    if market == "london_gold":
+        from .price_source import fetch_kline
+        data = fetch_kline("hf_XAU", count=limit)
+        rng = {"min": data[0]["date"] if data else None,
+               "max": data[-1]["date"] if data else None,
+               "count": len(data)}
+        return {"market": market, "range": rng, "count": len(data), "data": data}
     data = store.get_kline(market, limit=limit, start=start, end=end)
     rng = store.kline_date_range(market)
     return {"market": market, "range": rng, "count": len(data), "data": data}
