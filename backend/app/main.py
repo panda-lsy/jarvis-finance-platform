@@ -15,6 +15,7 @@ from .db import PriceStore
 from .price_source import MARKETS as SOURCE_MARKETS
 from . import scheduler
 from .backtest import run_backtest
+from .ai_routes import router as ai_router
 
 store = PriceStore()
 
@@ -27,7 +28,10 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="JARVIS Gold Backend", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="JARVIS Gold Backend", version="1.1.0", lifespan=lifespan)
+
+# AI 接口 (DeepSeek, Python 直连)
+app.include_router(ai_router)
 
 # CORS: 允许 GitHub Pages 前端跨域访问
 app.add_middleware(
