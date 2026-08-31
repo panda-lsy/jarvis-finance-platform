@@ -63,8 +63,8 @@ function useSuggestion(s) { input.value = s }
 async function runQuote() {
   quoteLoading.value = true; quoteResult.value = ''
   try {
-    const q = await api.goldQuote('gold_etf')
-    const rt = q.data?.prices?.gold_etf?.realtime
+    const q = await api.marketPrices()
+    const rt = q.data?.gold_etf
     if (!rt) { quoteResult.value = '未获取到行情' ; return }
     quoteData.value = rt
     const d = await api.aiChat([{ role: 'user', content:

@@ -24,7 +24,10 @@ const tabs = ['行情', '回测', '模拟盘', 'AI中心', '运维']
 const activeTab = ref('行情')
 function switchTab(name) {
   activeTab.value = name
-  if (name === '行情') setTimeout(() => klineChart && klineChart.resize(), 50)
+  if (name === '行情') setTimeout(() => {
+    klineEtfChart && klineEtfChart.resize()
+    klineLondonChart && klineLondonChart.resize()
+  }, 50)
 }
 
 // ---- 行情状态 ----
