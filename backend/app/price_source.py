@@ -128,31 +128,52 @@ def fetch_kline(symbol: str = "sh518850", count: int = 120, fq: str = "qfq") -> 
 
 
 def _fetch_london_kline(symbol: str, count: int) -> List[Dict]:
-    """伦敦金/国际金日K (新浪 GlobalFuturesService)"""
-    try:
-        s = _session()
-        s.headers.update({"Referer": "https://finance.sina.com.cn"})
-        url = "https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var%20_=/GlobalFuturesService.getGlobalFuturesDailyKLine"
-        resp = s.get(url, params={"symbol": "XAU"}, timeout=12)
-        import re, json as _json
-        m = re.search(r"\(\[(.*)\]\)", resp.text, re.S)
-        if not m:
-            return []
-        data = _json.loads("[" + m.group(1) + "]")
-        out = []
-        for k in data[-count:]:
-            out.append({
-                "date": k["date"],
-                "open": float(k["open"]),
-                "close": float(k["close"]),
-                "high": float(k["high"]),
-                "low": float(k["low"]),
-                "volume": float(k.get("volume", 0) or 0),
-            })
-        return out
-    except Exception as e:
-        logger.warning("london kline fetch failed %s: %s", symbol, e)
-        return []
+    """伦敦金/国际金日K (新浪 GlobalFuturesService)
+    带重试 + 内存缓存, 提高稳定性
+    """
+    import re, json as _json, time as _time
+    # 内存缓存: 避免频繁请求新浪(易限流)
+    if _LONDON_CACHE.get("data") and _time.time() - _LONDON_CACHE.get("ts", 0) < 60:
+        return _LONDON_CACHE["data"][-count:]
+    last_err = None
+    for attempt in range(3):
+        try:
+            s = _session()
+            s.headers.update({"Referer": "https://finance.sina.com.cn"})
+            url = "https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var%20_=/GlobalFuturesService.getGlobalFuturesDailyKLine"
+            resp = s.get(url, params={"symbol": "XAU"}, timeout=12)
+            m = re.search(r"\(\[(.*)\]\)", resp.text, re.S)
+            if not m:
+                raise ValueError("sina response parse fail")
+            data = _json.loads("[" + m.group(1) + "]")
+            out = []
+            for k in data[-count:]:
+                out.append({
+                    "date": k["date"],
+                    "open": float(k["open"]),
+                    "close": float(k["close"]),
+                    "high": float(k["high"]),
+                    "low": float(k["low"]),
+                    "volume": float(k.get("volume", 0) or 0),
+                })
+            if out:
+                _LONDON_CACHE["data"] = out
+                _LONDON_CACHE["ts"] = _time.time()
+                return out
+            raise ValueError("empty kline")
+        except Exception as e:
+            last_err = e
+            _time.sleep(0.5 * (attempt + 1))
+    # 全部失败: 用缓存(即使过期)
+    if _LONDON_CACHE.get("data"):
+        logger.warning("london kline fetch failed, use cache: %s", last_err)
+        return _LONDON_CACHE["data"][-count:]
+    logger.warning("london kline fetch failed: %s", last_err)
+    return []
+
+
+# 伦敦金K线内存缓存
+_LONDON_CACHE = {"data": [], "ts": 0}
 
 
 def fetch_all_markets_kline(count: int = 120) -> Dict[str, List[Dict]]:
