@@ -24,15 +24,81 @@
 
 ```text
 gold-trading/
-├── app/                      # Web/API 服务
-├── ai_interface/             # ASR/TTS/VLM/图像生成接口
-├── src/                      # 交易核心模块
-├── ops/                      # 监控、通知、OpenClaw 模板管理
-├── scripts/                  # Windows + Linux/macOS 运维脚本
-├── web/                      # 统一工作台静态入口
-├── config/                   # 配置与模板
-└── skills/                   # Skill 文档
+├── app/                      # Web/API 服务 (原)
+├── ai_interface/             # ASR/TTS/VLM/图像生成接口 (原)
+├── src/                      # 交易核心模块 (原)
+├── ops/                      # 监控、通知、OpenClaw 模板管理 (原)
+├── scripts/                  # Windows + Linux/macOS 运维脚本 (原)
+├── web/                      # 统一工作台静态入口 (原)
+├── config/                   # 配置与模板 (原)
+├── skills/                   # Skill 文档 (原)
+├── backend/                  # ★ Python 辅助微服务 (FastAPI + SQLite, 数据采集/AI预处理)
+├── java-backend/             # ★ Java 主后端 (Spring Boot 3, 金融数据交互 + DeepSeek AI)
+├── frontend/                 # ★ Vue.js 演示前端 (GitHub Pages)
+├── mobile/                   # ★ React Native 移动端 (Expo)
+└── .github/workflows/
+    ├── ci.yml                # 原有 CI
+    └── deploy-frontend.yml   # ★ 部署 Vue 前端到 GitHub Pages
 ```
+
+## ★ 新增架构：Java 主后端 + Python 辅助微服务 + 前端分离
+
+在原有 AI 全栈基础上，新增了轻量分离架构（暂不部署本地 AI 模块）：
+
+- **Java 主后端** (`java-backend/`, Spring Boot 3, 端口 8200): 金融数据交互 + DeepSeek 大模型集成。负责业务 API / 行情 / AI 投研分析。
+- **Python 辅助微服务** (`backend/`, FastAPI, 端口 8100): 仅保留数据采集 / AI 预处理，被 Java 回退调用。
+- **DeepSeek 接入**: 兼容 OpenAI Chat / Responses / Anthropic Messages 三种协议，`AiGateway` 统一路由。
+- **前端** (`frontend/` Vue 3 + `mobile/` React Native) + **数据源** (腾讯财经)。
+
+### Java 主后端启动
+
+```bash
+cd java-backend
+export DEEPSEEK_API_KEY=<Key>
+mvn spring-boot:run        # 端口 8200
+```
+
+### Python 辅助微服务启动
+
+```bash
+cd backend && python -m uvicorn app.main:app --host 0.0.0.0 --port 8100
+```
+
+详细说明见 `java-backend/README.md` 与 `backend/README.md`。
+
+
+### 本机后端启动
+
+```bash
+cd backend
+pip install -r requirements.txt
+export GOLD_DB_PATH=$(pwd)/data/gold.db   # 可选
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8100
+```
+
+### Vue 前端启动 (本地)
+
+```bash
+cd frontend
+npm install
+npm run dev   # http://localhost:5173/gold-trading/ (代理 -> :8100)
+```
+
+### GitHub Pages 部署
+
+推送 `main` 且改动 `frontend/` 即自动构建部署；访问时用 `?api=` 指定本机后端：
+`https://<user>.github.io/gold-trading/?api=http://<本机IP>:8100`
+
+### React Native 移动端
+
+```bash
+cd mobile
+npm install
+npx expo start
+```
+
+详细说明见各子目录 README。
+
 
 ## 快速开始
 

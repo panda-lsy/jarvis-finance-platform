@@ -1,0 +1,53 @@
+spring:
+  application:
+    name: jarvis-gold-research-backend
+  datasource:
+    # 默认 H2 文件库; 生产可切换 SQLite(见下注释) 或 MySQL/Postgres
+    url: jdbc:h2:file:./data/research;MODE=MySQL;DB_CLOSE_DELAY=-1
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: true
+
+server:
+  port: 8200
+
+# 贾维斯平台配置
+jarvis:
+  # 黄金行情 (沿用现有腾讯源)
+  gold:
+    realtime-url: https://qt.gtimg.cn/q={symbol}
+    kline-url: https://web.ifzq.gtimg.cn/appstock/app/fqkline/get
+    default-symbol: sh518850
+  # Python 辅助微服务 (数据采集/AI预处理), 可选
+  python-service:
+    enabled: true
+    base-url: http://127.0.0.1:8100
+
+# AI 大模型多协议适配 (DeepSeek 远程 API)
+ai:
+  # 默认协议: openai-chat | openai-responses | anthropic-messages
+  protocol: openai-chat
+  openai-chat:
+    base-url: https://api.deepseek.com/v1
+    api-key: ${DEEPSEEK_API_KEY:}
+    model: deepseek-chat
+    timeout-seconds: 60
+  openai-responses:
+    base-url: https://api.deepseek.com/v1
+    api-key: ${DEEPSEEK_API_KEY:}
+    model: deepseek-chat
+  anthropic-messages:
+    base-url: https://api.anthropic.com
+    api-key: ${ANTHROPIC_API_KEY:}
+    model: claude-3-5-sonnet-20241022
+
+logging:
+  level:
+    com.jarvis: INFO

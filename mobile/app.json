@@ -1,0 +1,13 @@
+{
+  "expo": {
+    "name": "贾维斯黄金",
+    "slug": "jarvis-gold-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#0b1020",
+    "ios": { "supportsTablet": true },
+    "android": { "package": "com.jarvis.goldmobile" },
+    "web": { "favicon": "./assets/icon.png" }
+  }
+}

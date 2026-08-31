@@ -20,6 +20,13 @@ dist/
 *.egg-info/
 .eggs/
 
+# Node dependencies & build output (Vue / React Native)
+node_modules/
+frontend/dist/
+mobile/.expo/
+mobile/web-build/
+*.tsbuildinfo
+
 # Test and tooling cache
 .pytest_cache/
 .mypy_cache/
@@ -52,6 +59,10 @@ data/ai_outputs/
 data/*.db
 data/*.db-wal
 data/*.db-shm
+backend/data/
+java-backend/data/
+java-backend/target/
+java-backend/.mvn/
 
 # Downloaded OpenVINO model artifacts
 models/

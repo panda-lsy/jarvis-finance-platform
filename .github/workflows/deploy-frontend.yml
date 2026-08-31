@@ -1,0 +1,66 @@
+name: Deploy Frontend to GitHub Pages
+
+# 触发: 推送到 main 且 frontend/ 或工作流文件有改动
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/deploy-frontend.yml'
+  workflow_dispatch:   # 支持手动触发
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 同一时间只允许一次 Pages 部署
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci || npm install
+
+      - name: Build Vue app
+        working-directory: frontend
+        run: npm run build
+
+      - name: Prepare Pages artifact
+        # 前端构建产物 + 原始静态入口(web/) 合并到发布目录
+        run: |
+          mkdir -p _site
+          # Vue 构建产物 (已在 /gold-trading/ base 下)
+          cp -r frontend/dist/* _site/
+          # 附带仓库说明页
+          cp README.md _site/README_PROJECT.md 2>/dev/null || true
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
