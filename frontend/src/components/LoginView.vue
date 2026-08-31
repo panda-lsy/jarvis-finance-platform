@@ -49,7 +49,7 @@ function switchMode() {
   <div class="auth-page">
     <div class="auth-card">
       <div class="auth-brand">
-        <span class="brand-icon"></span>
+        <img src="/favicon.png" class="brand-icon" alt="logo" />
         <h1>贾维斯 · 金融投研</h1>
         <p class="sub">DeepSeek 驱动 · 模拟盘交易</p>
       </div>
@@ -105,8 +105,8 @@ function switchMode() {
 }
 .auth-brand { text-align: center; margin-bottom: 24px; }
 .brand-icon {
-  width: 42px; height: 42px; border-radius: 10px; display: inline-block;
-  background: linear-gradient(135deg, #4da8ff, #17d5c2);
+  width: 48px; height: 48px; border-radius: 12px; display: inline-block;
+  object-fit: cover;
   box-shadow: 0 0 24px rgba(54,174,255,.5);
 }
 h1 { color: #e9effb; font-size: 22px; margin: 12px 0 4px; }

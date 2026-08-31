@@ -294,7 +294,7 @@ onUnmounted(() => {
   <div class="container">
     <header class="navbar">
       <div class="brand">
-        <span class="brand-icon"></span>
+        <img src="/favicon.png" class="brand-icon" alt="logo" />
         <span class="brand-name">贾维斯 · 金融投研</span>
       </div>
       <div class="nav-right">
@@ -483,7 +483,7 @@ onUnmounted(() => {
 .container { max-width: 1200px; margin: 0 auto; padding: 0 20px 40px; }
 .navbar { display: flex; align-items: center; justify-content: space-between; padding: 16px 0; }
 .brand { display: flex; align-items: center; gap: 10px; font-size: 20px; font-weight: 700; }
-.brand-icon { width: 22px; height: 22px; border-radius: 6px; background: linear-gradient(135deg, #4da8ff, #17d5c2); box-shadow: 0 0 18px rgba(54,174,255,.45); }
+.brand-icon { width: 30px; height: 30px; border-radius: 8px; display: inline-block; object-fit: cover; vertical-align: middle; box-shadow: 0 0 18px rgba(54,174,255,.35); }
 .nav-right { display: flex; align-items: center; gap: 12px; }
 .user-chip { display: flex; align-items: center; gap: 10px; }
 .email { color: #8ba0c8; font-size: 13px; }
