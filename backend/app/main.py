@@ -7,7 +7,7 @@
 from typing import Optional
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -16,6 +16,7 @@ from .price_source import MARKETS as SOURCE_MARKETS
 from . import scheduler
 from .backtest import run_backtest
 from .ai_routes import router as ai_router
+from .jd_ws import ws_handler, start_poller
 
 store = PriceStore()
 
@@ -25,6 +26,9 @@ async def lifespan(app: FastAPI):
     # 启动时先加载历史 + 启动后台周期抓取
     scheduler.load_historical(store, count=120)
     scheduler.start_background(interval=300)
+    # 京东积存金双源轮询 (每 1 分钟) + WS 推送
+    import asyncio
+    start_poller(store, asyncio.get_running_loop())
     yield
 
 
@@ -49,6 +53,30 @@ def health():
         "service": "jarvis-gold-backend",
         "time": __import__("datetime").datetime.now().isoformat(),
     }
+
+
+@app.websocket("/ws/prices")
+async def ws_prices(websocket: WebSocket):
+    """WS 实时金价: 京东积存金双源, 每 1 分钟推送"""
+    await ws_handler(websocket)
+
+
+@app.get("/api/jd/prices")
+def jd_prices():
+    """京东积存金实时价 (最近抓取值, 立即返回)"""
+    from .jd_ws import _last_push
+    return {"code": 200, "message": "ok", "data": _last_push}
+
+
+@app.get("/api/jd/snapshots")
+def jd_snapshots(limit: int = 60):
+    """京东价持久化快照 (回测/图表用)"""
+    out = {}
+    for key in ("jd_zheshang", "jd_minsheng"):
+        snaps = store.get_snapshots(key, limit=limit)
+        if snaps:
+            out[key] = snaps
+    return {"code": 200, "message": "ok", "data": out}
 
 
 @app.get("/api/markets")

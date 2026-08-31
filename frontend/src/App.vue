@@ -1,5 +1,5 @@
 <script setup>
-import { ref, reactive, computed, onMounted, nextTick } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import * as echarts from 'echarts'
 import { api, auth, API_BASE } from './api/client'
 import LoginView from './components/LoginView.vue'
@@ -54,6 +54,41 @@ async function loadRealtime() {
     const d = await api.marketPrices()
     realtimePrices.value = d.data || null
   } catch (e) { /* 忽略, 不阻塞K线 */ }
+}
+
+// ---- 京东积存金实时金价 (旧京东源: 浙商+民生, WS 每分钟推送) ----
+const jdPrices = ref(null)
+const jdWsState = ref('连接中')
+const lastJdTime = ref('')
+let jdWs = null
+let jdReconnectTimer = null
+
+function jdWsUrl() {
+  return API_BASE.replace(/^http/, 'ws') + '/py/ws/prices'
+}
+
+function connectJdWs() {
+  try {
+    jdWs = new WebSocket(jdWsUrl())
+    jdWs.onopen = () => { jdWsState.value = '已连接' }
+    jdWs.onmessage = (ev) => {
+      try {
+        const d = JSON.parse(ev.data)
+        if (d.type === 'prices' && d.prices) {
+          jdPrices.value = d.prices
+          lastJdTime.value = d.timestamp || ''
+        }
+      } catch (e) { /* 忽略非JSON */ }
+    }
+    jdWs.onclose = () => {
+      jdWsState.value = '已断开, 5秒后重连'
+      clearTimeout(jdReconnectTimer)
+      jdReconnectTimer = setTimeout(connectJdWs, 5000)
+    }
+    jdWs.onerror = () => { try { jdWs.close() } catch (e) {} }
+  } catch (e) {
+    jdWsState.value = '连接失败'
+  }
 }
 
 // ---- 回测状态 ----
@@ -191,11 +226,17 @@ function fmtPct(n) { return n == null ? '-' : Number(n).toFixed(2) + '%' }
 onMounted(async () => {
   if (auth.isLoggedIn()) user.value = { email: '已登录' }
   await Promise.all([loadKline(), loadRealtime()])
+  connectJdWs()
   window.addEventListener('resize', () => {
     klineEtfChart && klineEtfChart.resize()
     klineLondonChart && klineLondonChart.resize()
     equityChart && equityChart.resize()
   })
+})
+
+onUnmounted(() => {
+  clearTimeout(jdReconnectTimer)
+  if (jdWs) { try { jdWs.close() } catch (e) {} }
 })
 </script>
 
@@ -229,6 +270,27 @@ onMounted(async () => {
 
       <!-- 行情: 上排实时价格(左右), 下排K线(各占一整行) -->
       <section v-show="activeTab === '行情'" class="panel-wrap">
+        <!-- 京东积存金实时金价 (WS 每分钟推送) -->
+        <div v-if="jdPrices" class="jd-bar">
+          <div class="jd-title">
+            京东积存金实时价
+            <span class="jd-ws" :class="jdWsState === '已连接' ? 'ok' : 'bad'">● {{ jdWsState }}</span>
+          </div>
+          <div class="jd-grid">
+            <div v-for="(p, key) in jdPrices" :key="key" class="jd-card">
+              <div class="jd-name">{{ p.label }}</div>
+              <div class="jd-price">{{ fmt(p.price) }}</div>
+              <div class="jd-sub">
+                <span :class="(p.change || 0) >= 0 ? 'pos' : 'neg'">
+                  {{ p.change }} ({{ fmtPct(p.change_pct) }})
+                </span>
+                <span v-if="p.time" class="rt-muted">{{ p.time }}</span>
+              </div>
+            </div>
+          </div>
+          <div v-if="lastJdTime" class="jd-hint">更新 {{ lastJdTime }}</div>
+        </div>
+
         <!-- 上排: 实时价格 Card (左右两个) -->
         <div v-if="realtimePrices" class="dual-grid">
           <div v-for="(m, key) in realtimePrices" :key="key" class="rt-card">
@@ -360,6 +422,22 @@ onMounted(async () => {
 .tab-btn.active { background: linear-gradient(135deg, #4da8ff, #a842ff); color: #fff; border-color: transparent; }
 .panel-wrap { margin-top: 4px; }
 .dual-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+/* 京东积存金实时金价 */
+.jd-bar { background: linear-gradient(135deg, rgba(77,168,255,.10), rgba(23,213,194,.08)); border: 1px solid rgba(77,168,255,.35); border-radius: 14px; padding: 16px 18px; margin-bottom: 16px; }
+.jd-title { font-size: 14px; color: #e9effb; font-weight: 600; margin-bottom: 12px; display: flex; align-items: center; gap: 10px; }
+.jd-ws { font-size: 12px; font-weight: 500; padding: 2px 10px; border-radius: 999px; border: 1px solid #243453; }
+.jd-ws.ok { color: #27c46b; border-color: rgba(39,196,107,.4); }
+.jd-ws.bad { color: #f5b942; border-color: rgba(245,185,66,.4); }
+.jd-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.jd-card { background: rgba(0,0,0,.25); border: 1px solid #243453; border-radius: 10px; padding: 12px 16px; }
+.jd-name { font-size: 13px; color: #8ba0c8; }
+.jd-price { font-size: 26px; font-weight: 700; color: #f5c542; font-variant-numeric: tabular-nums; margin: 2px 0; }
+.jd-sub { display: flex; gap: 12px; align-items: center; font-size: 13px; }
+.jd-hint { font-size: 12px; color: #6b7fa3; margin-top: 8px; text-align: right; }
+@media (max-width: 900px) {
+  .dual-grid, .jd-grid { grid-template-columns: 1fr; }
+  .jd-bar { padding: 12px; }
+}
 .stack-grid { display: flex; flex-direction: column; gap: 16px; }
 .rt-card { background: #121a2d; border: 1px solid #243453; border-radius: 12px; padding: 18px 20px; position: relative; overflow: hidden; }
 .rt-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px; background: linear-gradient(90deg, #4da8ff, #a842ff); }

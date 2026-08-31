@@ -119,6 +119,17 @@ class PriceStore:
             ).fetchall()
         return [dict(r) for r in rows]
 
+    def get_latest_snapshots(self) -> Dict[str, Dict]:
+        """每个 symbol 的最新一条快照 (用于 WS 初始推送)"""
+        with self._conn() as c:
+            rows = c.execute("""
+                SELECT s.symbol, s.ts, s.price, s.change_pct
+                FROM daily_snapshot s
+                JOIN (SELECT symbol, MAX(ts) AS mts FROM daily_snapshot GROUP BY symbol) t
+                  ON s.symbol = t.symbol AND s.ts = t.mts
+            """).fetchall()
+        return {r["symbol"]: dict(r) for r in rows}
+
     def summary(self) -> Dict:
         with self._conn() as c:
             k = c.execute("SELECT symbol, COUNT(*) n FROM kline GROUP BY symbol").fetchall()
