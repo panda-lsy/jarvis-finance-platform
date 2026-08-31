@@ -29,17 +29,27 @@ function switchTab(name) {
 
 // ---- 行情状态 ----
 const connected = ref(false)
-const limit = ref(120)
 const realtimePrices = ref(null)   // 黄金ETF + 伦敦金 实时价
 const markets = [
   { key: 'gold_etf', label: '黄金ETF华夏', symbol: 'sh518850' },
   { key: 'london_gold', label: '伦敦金(现货黄金)', symbol: 'hf_XAU' },
 ]
+// 每个标的独立的K线配置 (limit: 根数, interval: day/1/5/15/30/60)
+const etfCfg = reactive({ limit: 120, interval: 'day' })
+const londonCfg = reactive({ limit: 120, interval: 'day' })
+const intervals = [
+  { v: 'day', label: '日K' },
+  { v: '1', label: '1分' },
+  { v: '5', label: '5分' },
+  { v: '15', label: '15分' },
+  { v: '30', label: '30分' },
+  { v: '60', label: '60分' },
+]
 
 async function loadRealtime() {
   try {
-    const d = await api.allPrices()
-    realtimePrices.value = d.data?.prices || null
+    const d = await api.marketPrices()
+    realtimePrices.value = d.data || null
   } catch (e) { /* 忽略, 不阻塞K线 */ }
 }
 
@@ -58,17 +68,17 @@ const klineRanges = ref({ gold_etf: null, london_gold: null })
 
 // ---- 行情/回测 ----
 async function loadKline() {
-  // 同时加载两个标的的K线
+  // 同时加载两个标的的K线 (各自独立配置)
   await Promise.all([
-    loadOneKline('gold_etf', klineEtfRef, 'klineEtfChart'),
-    loadOneKline('london_gold', klineLondonRef, 'klineLondonChart'),
+    loadOneKline('gold_etf', klineEtfRef, 'klineEtfChart', etfCfg),
+    loadOneKline('london_gold', klineLondonRef, 'klineLondonChart', londonCfg),
   ])
 }
 
-async function loadOneKline(marketKey, refObj, chartVar) {
+async function loadOneKline(marketKey, refObj, chartVar, cfg) {
   try {
     const m = markets.find(x => x.key === marketKey) || markets[0]
-    const d = await api.goldKline({ market: marketKey, limit: limit.value, symbol: m.symbol })
+    const d = await api.marketKline({ market: marketKey, limit: cfg.limit, interval: cfg.interval })
     let data = Array.isArray(d.data) ? d.data : (d.data?.data || [])
     klineRanges.value[marketKey] = d.data?.range
     renderKline(refObj, chartVar, data)
@@ -79,7 +89,7 @@ async function loadOneKline(marketKey, refObj, chartVar) {
 async function runBacktest() {
   bt.running = true; btError.value = ''; btResult.value = null
   try {
-    const d = await api.goldKline({ market: 'gold_etf', limit: limit.value })
+    const d = await api.marketKline({ market: 'gold_etf', limit: etfCfg.limit, interval: 'day' })
     const klines = Array.isArray(d.data) ? d.data : (d.data?.data || [])
     // 前端本地双均线回测
     const res = localBacktest(klines, bt.short_ma, bt.long_ma, bt.initial_cash)
@@ -214,50 +224,63 @@ onMounted(async () => {
                 :class="{ active: activeTab === t }" @click="switchTab(t)">{{ t }}</button>
       </nav>
 
-      <!-- 行情: 双Card布局 (上:实时价格, 下:K线) -->
+      <!-- 行情: 上排实时价格(左右), 下排K线(各占一整行) -->
       <section v-show="activeTab === '行情'" class="panel-wrap">
         <!-- 上排: 实时价格 Card (左右两个) -->
         <div v-if="realtimePrices" class="dual-grid">
           <div v-for="(m, key) in realtimePrices" :key="key" class="rt-card">
-            <div class="rt-name">{{ m.label }}</div>
-            <div class="rt-price">{{ fmt(m.realtime?.price) }}</div>
+            <div class="rt-name">{{ m.name }}</div>
+            <div class="rt-price">{{ fmt(m.price) }}</div>
             <div class="rt-sub">
-              <span :class="(m.realtime?.change || 0) >= 0 ? 'pos' : 'neg'">
-                {{ m.realtime?.change }} ({{ fmtPct(m.realtime?.change_pct) }})
+              <span :class="(m.change || 0) >= 0 ? 'pos' : 'neg'">
+                {{ m.change }} ({{ fmtPct(m.change_pct) }})
               </span>
-              <span class="rt-muted">昨收 {{ m.realtime?.prev_close }}</span>
+              <span class="rt-muted">昨收 {{ m.prev_close }}</span>
             </div>
           </div>
         </div>
 
-        <!-- 下排: K线 Card (左右两个) -->
-        <div class="dual-grid">
+        <!-- 下排: K线 Card (各占一整行, 两排) -->
+        <div class="stack-grid">
           <div class="panel kline-card">
             <div class="panel-head">
               <h2>黄金ETF华夏 K线</h2>
+              <div class="kline-ctrl">
+                <select v-model="etfCfg.interval" @change="loadKline" class="select">
+                  <option v-for="iv in intervals" :key="iv.v" :value="iv.v">{{ iv.label }}</option>
+                </select>
+                <select v-model.number="etfCfg.limit" @change="loadKline" class="select">
+                  <option :value="60">60 根</option>
+                  <option :value="120">120 根</option>
+                  <option :value="250">250 根</option>
+                </select>
+              </div>
             </div>
             <div ref="klineEtfRef" class="chart tall"></div>
             <div v-if="klineRanges.gold_etf" class="hint">
               区间 {{ klineRanges.gold_etf.min }} ~ {{ klineRanges.gold_etf.max }} ({{ klineRanges.gold_etf.count }} 根)
             </div>
           </div>
+
           <div class="panel kline-card">
             <div class="panel-head">
               <h2>伦敦金(现货黄金) K线</h2>
+              <div class="kline-ctrl">
+                <select v-model="londonCfg.interval" @change="loadKline" class="select">
+                  <option v-for="iv in intervals" :key="iv.v" :value="iv.v">{{ iv.label }}</option>
+                </select>
+                <select v-model.number="londonCfg.limit" @change="loadKline" class="select">
+                  <option :value="60">60 根</option>
+                  <option :value="120">120 根</option>
+                  <option :value="250">250 根</option>
+                </select>
+              </div>
             </div>
             <div ref="klineLondonRef" class="chart tall"></div>
             <div v-if="klineRanges.london_gold" class="hint">
               区间 {{ klineRanges.london_gold.min }} ~ {{ klineRanges.london_gold.max }} ({{ klineRanges.london_gold.count }} 根)
             </div>
           </div>
-        </div>
-
-        <div class="panel-head" style="margin-top:16px">
-          <label class="hint" style="margin:0">K线周期</label>
-          <select v-model.number="limit" @change="loadKline" class="select">
-            <option :value="60">60 日</option>
-            <option :value="120">120 日</option>
-          </select>
         </div>
       </section>
 
@@ -334,6 +357,7 @@ onMounted(async () => {
 .tab-btn.active { background: linear-gradient(135deg, #4da8ff, #a842ff); color: #fff; border-color: transparent; }
 .panel-wrap { margin-top: 4px; }
 .dual-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+.stack-grid { display: flex; flex-direction: column; gap: 16px; }
 .rt-card { background: #121a2d; border: 1px solid #243453; border-radius: 12px; padding: 18px 20px; position: relative; overflow: hidden; }
 .rt-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px; background: linear-gradient(90deg, #4da8ff, #a842ff); }
 .rt-name { color: #8ba0c8; font-size: 13px; margin-bottom: 6px; }
@@ -341,6 +365,7 @@ onMounted(async () => {
 .rt-sub { display: flex; align-items: center; gap: 12px; margin-top: 6px; font-size: 13px; }
 .rt-muted { color: #5a6b8c; font-size: 12px; }
 .kline-card { margin-bottom: 0; }
+.kline-ctrl { display: flex; gap: 8px; }
 @media (max-width: 900px) { .dual-grid { grid-template-columns: 1fr; } }
 .panel { background: #121a2d; border: 1px solid #243453; border-radius: 12px; padding: 20px; }
 .panel-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }

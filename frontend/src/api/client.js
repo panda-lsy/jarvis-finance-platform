@@ -62,13 +62,12 @@ export const api = {
   simAccount: () => get(API_BASE, '/api/sim/account'),
   simTrades: (limit) => get(API_BASE, '/api/sim/trades', { limit }),
   simOrder: (type, symbol, quantity, leverage) => post(API_BASE, '/api/sim/order', { type, symbol, quantity, leverage: leverage || 1 }),
+  // 市场数据 (Java 主管数据存储: 实时价格 + K线)
+  marketPrices: () => get(API_BASE, '/api/market/prices'),
+  marketKline: (params) => get(API_BASE, '/api/market/kline', params),
 
-  // ===== Python 后端 (行情 + AI) =====
-  // 行情
+  // ===== Python 后端 (AI) =====
   pyHealth: () => get(API_PY, '/api/health'),
-  goldQuote: (symbol) => get(API_PY, '/api/prices', { market: symbol }),
-  allPrices: () => get(API_PY, '/api/prices'),
-  goldKline: (params) => get(API_PY, '/api/kline', params),
   // 回测
   backtest: (params) => get(API_PY, '/api/backtest', params),
   // AI (DeepSeek, Python 直连)

@@ -45,6 +45,7 @@ public class SecurityConfig {
                 .requestMatchers("/api/auth/**").permitAll()
                 .requestMatchers("/api/health").permitAll()
                 .requestMatchers("/api/gold/**").permitAll()      // 行情公开
+                .requestMatchers("/api/market/**").permitAll()   // 市场数据公开
                 .requestMatchers("/api/ai/status").permitAll()
                 .requestMatchers("/api/ai/**").permitAll()        // AI(无Key时也允许触发看错误)
                 // 其余需认证
