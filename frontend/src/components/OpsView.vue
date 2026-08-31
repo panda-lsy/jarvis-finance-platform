@@ -10,7 +10,7 @@ let timer = null
 async function check() {
   lastCheck.value = new Date().toLocaleTimeString('zh-CN')
   try { const d = await api.health(); java.value = d.data } catch (e) { java.value = { error: String(e) } }
-  try { const d = await api.pyHealth(); py.value = d.data } catch (e) { py.value = { error: String(e) } }
+  try { const d = await api.pyHealth(); py.value = d.data ?? d } catch (e) { py.value = { error: String(e) } }
 }
 
 function ok(v) { return !v || v.error ? 'bad' : 'ok' }
