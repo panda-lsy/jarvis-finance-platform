@@ -17,11 +17,15 @@ REALTIME_URL = "https://qt.gtimg.cn/q={symbol}"
 KLINE_URL = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
 
 # 支持的标的
-#  symbol 为腾讯格式代码 (sh/sz 前缀)
+#  symbol 为腾讯格式代码 (sh/sz 前缀; hf_ 为国际/伦敦金)
 MARKETS = {
     "gold_etf": {
         "label": "黄金ETF华夏",
         "symbol": "sh518850",
+    },
+    "london_gold": {
+        "label": "伦敦金(现货黄金)",
+        "symbol": "hf_XAU",
     },
 }
 
@@ -33,29 +37,54 @@ def _session() -> requests.Session:
 
 
 def fetch_realtime(symbol: str = "sh518850") -> Optional[Dict]:
-    """获取实时报价。返回 dict 或 None。"""
+    """获取实时报价。返回 dict 或 None。
+    兼容两种格式:
+      - A股/ETF: ~ 分隔 (qt.gtimg.cn)
+      - 国际金/伦敦金: , 分隔 (hf_XAU)
+    """
     try:
         s = _session()
         resp = s.get(REALTIME_URL.format(symbol=symbol), timeout=8)
         resp.encoding = "gb2312"
         text = resp.text
-        if "~" not in text:
+        if "=" not in text:
             return None
-        v = text.split("~")
-        # 字段: 1名称, 3现价, 4昨收, 5今开, 6成交量(手), 31涨跌, 32涨跌%
-        name = v[1]
-        price = float(v[3]) if len(v) > 3 else None
-        prev_close = float(v[4]) if len(v) > 4 else None
-        open_p = float(v[5]) if len(v) > 5 else None
-        volume = float(v[6]) if len(v) > 6 else None
-        change = float(v[31]) if len(v) > 31 else None
-        change_pct = float(v[32]) if len(v) > 32 else None
+        payload = text.split("=", 1)[1].strip().strip(';').strip('"')
+        if not payload:
+            return None
+
+        # 判断分隔符: 国际金用逗号, A股用波浪号
+        if "~" in payload:
+            v = payload.split("~")
+            name = v[1]
+            price = float(v[3]) if len(v) > 3 else None
+            prev_close = float(v[4]) if len(v) > 4 else None
+            open_p = float(v[5]) if len(v) > 5 else None
+            volume = float(v[6]) if len(v) > 6 else None
+            change = float(v[31]) if len(v) > 31 else None
+            change_pct = float(v[32]) if len(v) > 32 else None
+        else:
+            # 国际金/伦敦金: 逗号分隔
+            v = payload.split(",")
+            # [0]现价 [1]涨跌 [2]今开 [3]昨收 [4]最高 [5]最低 [6]时间 [7]昨收2 [8]均价 ... [13]名称
+            name = v[13] if len(v) > 13 else symbol
+            price = float(v[0]) if len(v) > 0 else None
+            change = float(v[1]) if len(v) > 1 else None
+            open_p = float(v[2]) if len(v) > 2 else None
+            prev_close = float(v[3]) if len(v) > 3 else None
+            high = float(v[4]) if len(v) > 4 else None
+            low = float(v[5]) if len(v) > 5 else None
+            volume = None
+            change_pct = (change / prev_close * 100) if (change is not None and prev_close) else None
+
         return {
             "symbol": symbol,
             "name": name,
             "price": price,
             "prev_close": prev_close,
             "open": open_p,
+            "high": high if "~" not in payload else None,
+            "low": low if "~" not in payload else None,
             "volume": volume,
             "change": change,
             "change_pct": change_pct,

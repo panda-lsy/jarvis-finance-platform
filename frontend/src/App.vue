@@ -31,6 +31,14 @@ function switchTab(name) {
 const connected = ref(false)
 const rangeInfo = ref(null)
 const limit = ref(120)
+const realtimePrices = ref(null)   // 黄金ETF + 伦敦金 实时价
+
+async function loadRealtime() {
+  try {
+    const d = await api.allPrices()
+    realtimePrices.value = d.data?.prices || null
+  } catch (e) { /* 忽略, 不阻塞K线 */ }
+}
 
 // ---- 回测状态 ----
 const bt = reactive({ short_ma: 5, long_ma: 20, initial_cash: 100000, running: false })
@@ -149,7 +157,7 @@ function fmtPct(n) { return n == null ? '-' : Number(n).toFixed(2) + '%' }
 
 onMounted(async () => {
   if (auth.isLoggedIn()) user.value = { email: '已登录' }
-  await loadKline()
+  await Promise.all([loadKline(), loadRealtime()])
   window.addEventListener('resize', () => { klineChart && klineChart.resize(); equityChart && equityChart.resize() })
 })
 </script>
@@ -184,6 +192,20 @@ onMounted(async () => {
 
       <!-- 行情 -->
       <section v-show="activeTab === '行情'" class="panel-wrap">
+        <!-- 实时价格面板: 黄金ETF + 伦敦金 -->
+        <div v-if="realtimePrices" class="rt-grid">
+          <div v-for="(m, key) in realtimePrices" :key="key" class="rt-card">
+            <div class="rt-name">{{ m.label }}</div>
+            <div class="rt-price">{{ fmt(m.realtime?.price) }}</div>
+            <div class="rt-sub">
+              <span :class="(m.realtime?.change || 0) >= 0 ? 'pos' : 'neg'">
+                {{ m.realtime?.change }} ({{ fmtPct(m.realtime?.change_pct) }})
+              </span>
+              <span class="rt-muted">昨收 {{ m.realtime?.prev_close }}</span>
+            </div>
+          </div>
+        </div>
+
         <div class="panel">
           <div class="panel-head">
             <h2>黄金ETF历史K线</h2>
@@ -269,6 +291,13 @@ onMounted(async () => {
 .tab-btn { background: #121a2d; border: 1px solid #243453; color: #8ba0c8; border-radius: 8px; padding: 9px 22px; cursor: pointer; font-size: 14px; }
 .tab-btn.active { background: linear-gradient(135deg, #4da8ff, #a842ff); color: #fff; border-color: transparent; }
 .panel-wrap { margin-top: 4px; }
+.rt-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin-bottom: 16px; }
+.rt-card { background: #121a2d; border: 1px solid #243453; border-radius: 12px; padding: 18px 20px; position: relative; overflow: hidden; }
+.rt-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px; background: linear-gradient(90deg, #4da8ff, #a842ff); }
+.rt-name { color: #8ba0c8; font-size: 13px; margin-bottom: 6px; }
+.rt-price { font-size: 30px; font-weight: 700; color: #e9effb; font-variant-numeric: tabular-nums; }
+.rt-sub { display: flex; align-items: center; gap: 12px; margin-top: 6px; font-size: 13px; }
+.rt-muted { color: #5a6b8c; font-size: 12px; }
 .panel { background: #121a2d; border: 1px solid #243453; border-radius: 12px; padding: 20px; }
 .panel-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
 .panel-head h2 { margin: 0; font-size: 18px; color: #e9effb; }

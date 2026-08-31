@@ -67,6 +67,7 @@ export const api = {
   // 行情
   pyHealth: () => get(API_PY, '/api/health'),
   goldQuote: (symbol) => get(API_PY, '/api/prices', { market: symbol }),
+  allPrices: () => get(API_PY, '/api/prices'),
   goldKline: (params) => get(API_PY, '/api/kline', params),
   // 回测
   backtest: (params) => get(API_PY, '/api/backtest', params),
