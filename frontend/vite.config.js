@@ -1,9 +1,9 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 
-// GitHub Pages 部署在 /gold-trading/ 子路径下
+// GitHub Pages 部署在 /jarvis-finance-platform/ 子路径下 (仓库名)
 export default defineConfig({
-  base: '/gold-trading/',
+  base: '/jarvis-finance-platform/',
   plugins: [vue()],
   server: {
     port: 5173,
