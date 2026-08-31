@@ -59,7 +59,6 @@ async function loadRealtime() {
 // ---- 京东积存金实时金价 (前端直连京东HTTP, 经 nginx /jd/ 同域反代) ----
 // 后端每分钟抓取持久化 -> 前端画K线时请求 /api/jd/kline
 const jdPrices = ref(null)
-const jdLiveState = ref('连接中')
 const lastJdTime = ref('')
 let jdPollTimer = null
 const JD_SOURCES = [
@@ -99,9 +98,6 @@ async function loadJdLive() {
   }))
   if (okCount > 0) {
     jdPrices.value = out
-    jdLiveState.value = '直连京东 ✓'
-  } else {
-    jdLiveState.value = '京东接口暂不可达'
   }
 }
 
@@ -322,56 +318,22 @@ onUnmounted(() => {
 
       <!-- 行情: 上排实时价格(左右), 下排K线(各占一整行) -->
       <section v-show="activeTab === '行情'" class="panel-wrap">
-        <!-- 京东积存金实时金价 (前端直连京东HTTP) -->
-        <div v-if="jdPrices" class="jd-bar">
-          <div class="jd-title">
-            京东积存金实时价
-            <span class="jd-ws" :class="jdLiveState === '直连京东 ✓' ? 'ok' : 'bad'">● {{ jdLiveState }}</span>
-          </div>
-          <div class="jd-grid">
-            <div v-for="(p, key) in jdPrices" :key="key" class="jd-card">
-              <div class="jd-name">{{ p.label }}</div>
-              <div class="jd-price">{{ fmt(p.price) }}</div>
-              <div class="jd-sub">
-                <span :class="(p.change || 0) >= 0 ? 'pos' : 'neg'">
-                  {{ p.change }} ({{ fmtPct(p.change_pct) }})
-                </span>
-                <span v-if="p.time" class="rt-muted">{{ p.time }}</span>
-              </div>
+        <!-- 顶部: 京东积存金实时价 (两个Card) -->
+        <div v-if="jdPrices" class="dual-grid">
+          <div v-for="(p, key) in jdPrices" :key="key" class="rt-card jd">
+            <div class="rt-name">{{ p.label }}</div>
+            <div class="rt-price jd-price">{{ fmt(p.price) }}</div>
+            <div class="rt-sub">
+              <span :class="(p.change || 0) >= 0 ? 'pos' : 'neg'">
+                {{ p.change }} ({{ fmtPct(p.change_pct) }})
+              </span>
+              <span class="rt-muted">{{ p.time }}</span>
+              <span class="rt-muted" style="margin-left:auto">直连</span>
             </div>
           </div>
         </div>
 
-        <!-- 京东积存金K线 (后端实时聚合) -->
-        <div class="panel kline-card">
-          <div class="panel-head">
-            <h2>京东积存金 K线</h2>
-            <div class="kline-ctrl">
-              <select v-model="jdKlineCfg.market" @change="loadJdKline" class="select">
-                <option value="zheshang">浙商积存金</option>
-                <option value="minsheng">民生积存金</option>
-              </select>
-              <select v-model.number="jdKlineCfg.interval" @change="loadJdKline" class="select">
-                <option :value="1">1分</option>
-                <option :value="5">5分</option>
-                <option :value="15">15分</option>
-                <option :value="30">30分</option>
-                <option :value="60">60分</option>
-              </select>
-              <select v-model.number="jdKlineCfg.limit" @change="loadJdKline" class="select">
-                <option :value="100">100 根</option>
-                <option :value="200">200 根</option>
-                <option :value="500">500 根</option>
-              </select>
-            </div>
-          </div>
-          <div ref="jdKlineRef" class="chart jd-chart"></div>
-          <div v-if="jdKlineRange" class="hint">
-            区间 {{ jdKlineRange.min }} ~ {{ jdKlineRange.max }} ({{ jdKlineRange.count }} 根)
-          </div>
-        </div>
-
-        <!-- 上排: 实时价格 Card (左右两个) -->
+        <!-- 上排: 实时价格 Card (黄金ETF + 伦敦金) -->
         <div v-if="realtimePrices" class="dual-grid">
           <div v-for="(m, key) in realtimePrices" :key="key" class="rt-card">
             <div class="rt-name">{{ m.name }}</div>
@@ -385,7 +347,7 @@ onUnmounted(() => {
           </div>
         </div>
 
-        <!-- 下排: K线 Card (各占一整行, 两排) -->
+        <!-- 下排: K线 Card (各占一整行) -->
         <div class="stack-grid">
           <div class="panel kline-card">
             <div class="panel-head">
@@ -424,6 +386,35 @@ onUnmounted(() => {
             <div ref="klineLondonRef" class="chart tall"></div>
             <div v-if="klineRanges.london_gold" class="hint">
               区间 {{ klineRanges.london_gold.min }} ~ {{ klineRanges.london_gold.max }} ({{ klineRanges.london_gold.count }} 根)
+            </div>
+          </div>
+
+          <!-- 最下方: 京东积存金K线 (后端实时聚合) -->
+          <div class="panel kline-card">
+            <div class="panel-head">
+              <h2>京东积存金 K线</h2>
+              <div class="kline-ctrl">
+                <select v-model="jdKlineCfg.market" @change="loadJdKline" class="select">
+                  <option value="zheshang">浙商积存金</option>
+                  <option value="minsheng">民生积存金</option>
+                </select>
+                <select v-model.number="jdKlineCfg.interval" @change="loadJdKline" class="select">
+                  <option :value="1">1分</option>
+                  <option :value="5">5分</option>
+                  <option :value="15">15分</option>
+                  <option :value="30">30分</option>
+                  <option :value="60">60分</option>
+                </select>
+                <select v-model.number="jdKlineCfg.limit" @change="loadJdKline" class="select">
+                  <option :value="100">100 根</option>
+                  <option :value="200">200 根</option>
+                  <option :value="500">500 根</option>
+                </select>
+              </div>
+            </div>
+            <div ref="jdKlineRef" class="chart tall"></div>
+            <div v-if="jdKlineRange" class="hint">
+              区间 {{ jdKlineRange.min }} ~ {{ jdKlineRange.max }} ({{ jdKlineRange.count }} 根)
             </div>
           </div>
         </div>
@@ -502,23 +493,10 @@ onUnmounted(() => {
 .tab-btn.active { background: linear-gradient(135deg, #4da8ff, #a842ff); color: #fff; border-color: transparent; }
 .panel-wrap { margin-top: 4px; }
 .dual-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
-/* 京东积存金实时金价 */
-.jd-bar { background: linear-gradient(135deg, rgba(77,168,255,.10), rgba(23,213,194,.08)); border: 1px solid rgba(77,168,255,.35); border-radius: 14px; padding: 16px 18px; margin-bottom: 16px; }
-.jd-title { font-size: 14px; color: #e9effb; font-weight: 600; margin-bottom: 12px; display: flex; align-items: center; gap: 10px; }
-.jd-ws { font-size: 12px; font-weight: 500; padding: 2px 10px; border-radius: 999px; border: 1px solid #243453; }
-.jd-ws.ok { color: #27c46b; border-color: rgba(39,196,107,.4); }
-.jd-ws.bad { color: #f5b942; border-color: rgba(245,185,66,.4); }
-.jd-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-.jd-card { background: rgba(0,0,0,.25); border: 1px solid #243453; border-radius: 10px; padding: 12px 16px; }
-.jd-name { font-size: 13px; color: #8ba0c8; }
-.jd-price { font-size: 26px; font-weight: 700; color: #f5c542; font-variant-numeric: tabular-nums; margin: 2px 0; }
-.jd-sub { display: flex; gap: 12px; align-items: center; font-size: 13px; }
-.jd-hint { font-size: 12px; color: #6b7fa3; margin-top: 8px; text-align: right; }
+/* 京东积存金 Card 金色高亮 */
+.rt-card.jd::before { background: linear-gradient(90deg, #f5c542, #ff9d42); }
+.rt-card.jd .rt-price { color: #f5c542; }
 .jd-chart { height: 300px; margin-top: 12px; }
-@media (max-width: 900px) {
-  .dual-grid, .jd-grid { grid-template-columns: 1fr; }
-  .jd-bar { padding: 12px; }
-}
 .stack-grid { display: flex; flex-direction: column; gap: 16px; }
 .rt-card { background: #121a2d; border: 1px solid #243453; border-radius: 12px; padding: 18px 20px; position: relative; overflow: hidden; }
 .rt-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px; background: linear-gradient(90deg, #4da8ff, #a842ff); }

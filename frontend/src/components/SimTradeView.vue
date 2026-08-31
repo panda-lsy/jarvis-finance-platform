@@ -8,6 +8,7 @@ const loading = ref(true)
 const msg = ref('')
 const msgType = ref('info')
 const realtimePrices = ref(null)
+const jdPrices = ref(null)
 
 const order = reactive({
   symbol: 'sh518850',
@@ -15,6 +16,39 @@ const order = reactive({
   quantity: 100,
   leverage: 1,
 })
+
+// 京东积存金直连 (与行情页一致, 经 nginx /jd/ 同域反代)
+const JD_SOURCES = [
+  { key: 'zheshang', label: '浙商积存金', name: 'gw2/generic/jrm/h5/m/stdLatestPrice', sku: '1961543816' },
+  { key: 'minsheng', label: '民生积存金', name: 'gw/generic/hj/h5/m/latestPrice', sku: 'P005' },
+]
+
+function parseJdRate(raw) {
+  const s = String(raw ?? '0').replace('%', '')
+  const n = parseFloat(s)
+  return Number.isFinite(n) ? n : 0
+}
+
+async function loadJdLive() {
+  const out = {}
+  await Promise.all(JD_SOURCES.map(async (src) => {
+    try {
+      const d = await api.jdLive(src.name, src.sku)
+      const datas = d?.resultData?.datas
+      if (!d?.success || !datas) return
+      const price = parseFloat(datas.price)
+      if (!Number.isFinite(price)) return
+      const tsMs = parseInt(datas.time, 10) || 0
+      out[src.key] = {
+        source: src.key, label: src.label, price,
+        change: parseFloat(datas.upAndDownAmt || 0),
+        change_pct: parseJdRate(datas.upAndDownRate),
+        time: tsMs ? new Date(tsMs).toLocaleString('zh-CN', { hour12: false }) : '',
+      }
+    } catch (e) { /* 单源失败不影响另一源 */ }
+  }))
+  if (Object.keys(out).length) jdPrices.value = out
+}
 
 async function load() {
   try {
@@ -80,11 +114,25 @@ async function quickSell(symbol, qty) {
   }
 }
 
-onMounted(load)
+onMounted(() => { load(); loadJdLive() })
 </script>
 
 <template>
   <div class="sim">
+    <!-- 京东积存金实时价 (直连京东, 两个Card) -->
+    <div v-if="jdPrices" class="rt-grid">
+      <div v-for="(p, key) in jdPrices" :key="key" class="rt-card jd">
+        <div class="rt-name">{{ p.label }}</div>
+        <div class="rt-price jd-price">{{ fmt(p.price) }}</div>
+        <div class="rt-sub">
+          <span :class="(p.change || 0) >= 0 ? 'pos' : 'neg'">
+            {{ p.change }} ({{ fmtPct(p.change_pct) }})
+          </span>
+          <span class="rt-muted">{{ p.time }}</span>
+        </div>
+      </div>
+    </div>
+
     <!-- 实时价格 (黄金ETF + 伦敦金) -->
     <div v-if="realtimePrices" class="rt-grid">
       <div v-for="(m, key) in realtimePrices" :key="key" class="rt-card">
@@ -142,6 +190,9 @@ onMounted(load)
       <div class="order-form">
         <select v-model="order.symbol" class="select">
           <option value="sh518850">黄金ETF华夏 (sh518850)</option>
+          <option value="hf_XAU">伦敦金 (hf_XAU)</option>
+          <option value="jd_zheshang">浙商积存金 (jd_zheshang)</option>
+          <option value="jd_minsheng">民生积存金 (jd_minsheng)</option>
         </select>
         <div class="type-toggle">
           <button :class="['btn', order.type === 'BUY' ? 'buy' : '']" @click="order.type = 'BUY'">买入</button>
@@ -213,6 +264,8 @@ onMounted(load)
 <style scoped>
 .sim { display: flex; flex-direction: column; gap: 20px; }
 .rt-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.rt-card.jd::before { background: linear-gradient(90deg, #f5c542, #ff9d42); }
+.jd-price { color: #f5c542; }
 .rt-card { background: #0f1626; border: 1px solid #243453; border-radius: 12px; padding: 18px 20px; position: relative; overflow: hidden; }
 .rt-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px; background: linear-gradient(90deg, #4da8ff, #a842ff); }
 .rt-name { color: #8ba0c8; font-size: 13px; margin-bottom: 6px; }
