@@ -33,6 +33,29 @@ echo '== Legacy related processes =='
 ps -ef | grep -E 'uvicorn|java.*8200|websocket_server|dashboard_v3|api_server' | grep -v grep || true
 
 echo
+echo '== Java process working directories =='
+for pid in $(pgrep -f 'java' 2>/dev/null || true); do
+  [ -d "/proc/$pid" ] || continue
+  printf 'pid=%s cwd=' "$pid"
+  readlink -f "/proc/$pid/cwd" 2>/dev/null || true
+done
+
+echo
+echo '== H2 database candidates =='
+for root in /opt /srv /var/www /root; do
+  [ -d "$root" ] || continue
+  find "$root" -maxdepth 6 -type f \( -name '*.mv.db' -o -name '*.h2.db' -o -name '*.trace.db' \) -printf '%p %s bytes\n' 2>/dev/null || true
+done
+
+echo
+echo '== PostgreSQL service / databases =='
+systemctl --no-pager --full status postgresql.service 2>/dev/null | head -20 || true
+if command -v psql >/dev/null 2>&1 && id postgres >/dev/null 2>&1; then
+  sudo -u postgres psql -Atqc "select current_setting('server_version');" 2>/dev/null || true
+  sudo -u postgres psql -Atqc "select datname from pg_database where datistemplate = false order by datname;" 2>/dev/null || true
+fi
+
+echo
 echo '== Nginx references to 8100/8200/py =='
 grep -RInE '8100|8200|location .*/py' /etc/nginx 2>/dev/null || true
 
