@@ -1,21 +1,27 @@
 <script setup>
-import { ref, reactive, computed, onMounted, onUnmounted, nextTick } from 'vue'
-import * as echarts from 'echarts'
-import { api, auth, API_BASE } from './api/client'
+import { ref, reactive, computed, onMounted, onUnmounted, nextTick, defineAsyncComponent } from 'vue'
+import { api } from './api/client'
 import LoginView from './components/LoginView.vue'
-import SimTradeView from './components/SimTradeView.vue'
-import AiCenter from './components/AiCenter.vue'
-import OpsView from './components/OpsView.vue'
+
+const SimTradeView = defineAsyncComponent(() => import('./components/SimTradeView.vue'))
+const AiCenter = defineAsyncComponent(() => import('./components/AiCenter.vue'))
+const OpsView = defineAsyncComponent(() => import('./components/OpsView.vue'))
+
+let echartsModulePromise = null
+function getEcharts() {
+  if (!echartsModulePromise) echartsModulePromise = import('./charts/echarts')
+  return echartsModulePromise
+}
 
 // ---- 登录态 ----
 const user = ref(null)
-const isLoggedIn = computed(() => !!user.value || auth.isLoggedIn())
+const isLoggedIn = computed(() => !!user.value)
 
 function handleLoggedIn(u) {
   user.value = u
 }
-function logout() {
-  auth.logout()
+async function logout() {
+  try { await api.logout() } catch (e) { /* 即使网络失败也清理本地 UI 状态 */ }
   user.value = null
 }
 
@@ -59,46 +65,15 @@ async function loadRealtime() {
 // ---- 京东积存金实时金价 (前端直连京东HTTP, 经 nginx /jd/ 同域反代) ----
 // 后端每分钟抓取持久化 -> 前端画K线时请求 /api/jd/kline
 const jdPrices = ref(null)
-const lastJdTime = ref('')
 let jdPollTimer = null
-const JD_SOURCES = [
-  { key: 'zheshang', label: '浙商积存金', name: 'gw2/generic/jrm/h5/m/stdLatestPrice', sku: '1961543816' },
-  { key: 'minsheng', label: '民生积存金', name: 'gw/generic/hj/h5/m/latestPrice', sku: 'P005' },
-]
-
-function parseJdRate(raw) {
-  // 京东返回 "-0.45%" 或 "0"
-  const s = String(raw ?? '0').replace('%', '')
-  const n = parseFloat(s)
-  return Number.isFinite(n) ? n : 0
-}
 
 async function loadJdLive() {
-  const out = {}
-  let okCount = 0
-  await Promise.all(JD_SOURCES.map(async (src) => {
-    try {
-      const d = await api.jdLive(src.name, src.sku)
-      const datas = d?.resultData?.datas
-      if (!d?.success || !datas) return
-      const price = parseFloat(datas.price)
-      if (!Number.isFinite(price)) return
-      okCount++
-      const tsMs = parseInt(datas.time, 10) || 0
-      out[src.key] = {
-        source: src.key,
-        label: src.label,
-        price,
-        yesterday_price: parseFloat(datas.yesterdayPrice || datas.price),
-        change: parseFloat(datas.upAndDownAmt || 0),
-        change_pct: parseJdRate(datas.upAndDownRate),
-        time: tsMs ? new Date(tsMs).toLocaleString('zh-CN', { hour12: false }) : '',
-      }
-    } catch (e) { /* 单源失败不影响另一源 */ }
-  }))
-  if (okCount > 0) {
-    jdPrices.value = out
-  }
+  try {
+    const d = await api.jdPrices()
+    if (d.code === 200 && d.data && Object.keys(d.data).length) {
+      jdPrices.value = d.data
+    }
+  } catch (e) { /* 保留上一次有效值 */ }
 }
 
 // ---- 京东K线 (请求后端, 由每分钟持久化快照聚合) ----
@@ -113,11 +88,13 @@ async function loadJdKline() {
     // 兼容两种返回: 后端裸结构 {market,count,range,data} 或 ApiResponse {code,message,data:{...}}
     const body = d?.data && d.data.data ? d.data : d
     jdKlineRange.value = body?.range || null
-    renderJdKline(jdKlineRef, body?.data || [])
+    await renderJdKline(jdKlineRef, body?.data || [])
   } catch (e) { /* 忽略 */ }
 }
 
-function renderJdKline(elRef, data) {
+async function renderJdKline(elRef, data) {
+  if (!elRef.value) return
+  const echarts = await getEcharts()
   if (!elRef.value) return
   if (!jdKlineChart) {
     jdKlineChart = echarts.init(elRef.value)
@@ -164,11 +141,10 @@ async function loadKline() {
 
 async function loadOneKline(marketKey, refObj, chartVar, cfg) {
   try {
-    const m = markets.find(x => x.key === marketKey) || markets[0]
     const d = await api.marketKline({ market: marketKey, limit: cfg.limit, interval: cfg.interval })
     let data = Array.isArray(d.data) ? d.data : (d.data?.data || [])
     klineRanges.value[marketKey] = d.data?.range
-    renderKline(refObj, chartVar, data)
+    await renderKline(refObj, chartVar, data)
     connected.value = true
   } catch (e) { connected.value = false }
 }
@@ -176,48 +152,26 @@ async function loadOneKline(marketKey, refObj, chartVar, cfg) {
 async function runBacktest() {
   bt.running = true; btError.value = ''; btResult.value = null
   try {
-    const d = await api.marketKline({ market: 'gold_etf', limit: etfCfg.limit, interval: 'day' })
-    const klines = Array.isArray(d.data) ? d.data : (d.data?.data || [])
-    // 前端本地双均线回测
-    const res = localBacktest(klines, bt.short_ma, bt.long_ma, bt.initial_cash)
-    btResult.value = res
+    const d = await api.backtest({
+      market: 'gold_etf',
+      short_ma: bt.short_ma,
+      long_ma: bt.long_ma,
+      initial_cash: bt.initial_cash,
+      limit: etfCfg.limit,
+    })
+    if (d.code !== 200 || !d.data) {
+      throw new Error(d.message || '回测失败')
+    }
+    btResult.value = d.data
     await nextTick()
-    renderEquity(res.equity_curve || [])
+    await renderEquity(d.data.equity_curve || [])
   } catch (e) { btError.value = String(e) }
   finally { bt.running = false }
 }
 
-function localBacktest(klines, short, long, cash0) {
-  const closes = klines.map(k => k.close)
-  const dates = klines.map(k => k.date)
-  const ma = (win) => closes.map((_, i) =>
-    i >= win - 1 ? closes.slice(i - win + 1, i + 1).reduce((a, b) => a + b, 0) / win : null)
-  const maS = ma(short), maL = ma(long)
-  let cash = cash0, shares = 0, inPos = false
-  const equityCurve = [], trades = []
-  for (let i = 0; i < klines.length; i++) {
-    const c = closes[i], ms = maS[i], ml = maL[i]
-    if (ms != null && ml != null) {
-      if (ms > ml && !inPos) { shares = cash / c * 0.999; cash = 0; inPos = true; trades.push({date: dates[i], type: 'BUY', price: c}) }
-      else if (ms < ml && inPos) { cash = shares * c * 0.999; shares = 0; inPos = false; trades.push({date: dates[i], type: 'SELL', price: c}) }
-    }
-    equityCurve.push({ date: dates[i], equity: cash + shares * c })
-  }
-  const final = equityCurve.length ? equityCurve[equityCurve.length - 1].equity : cash0
-  const totalReturn = (final / cash0 - 1) * 100
-  let peak = equityCurve[0]?.equity || cash0, maxDd = 0
-  for (const p of equityCurve) { peak = Math.max(peak, p.equity); maxDd = Math.max(maxDd, (peak - p.equity) / peak) }
-  const days = Math.max(klines.length, 1)
-  const annual = (Math.pow(final / cash0, 365 / days) - 1) * 100
-  return {
-    range: { start: dates[0], end: dates[dates.length - 1], bars: dates.length },
-    final_equity: round2(final), total_return_pct: round2(totalReturn), annual_return_pct: round2(annual),
-    buy_hold_return_pct: round2(klines.length > 1 ? ((closes[closes.length-1]/closes[0] - 1) * 100) : 0),
-    max_drawdown_pct: round2(maxDd * 100), num_trades: trades.length, trades, equity_curve: equityCurve,
-  }
-}
-
-function renderKline(refObj, chartVar, data) {
+async function renderKline(refObj, chartVar, data) {
+  if (!refObj.value) return
+  const echarts = await getEcharts()
   if (!refObj.value) return
   let chart = chartVar === 'klineEtfChart' ? klineEtfChart : klineLondonChart
   if (!chart) {
@@ -255,7 +209,9 @@ function renderKline(refObj, chartVar, data) {
   })
 }
 
-function renderEquity(curve) {
+async function renderEquity(curve) {
+  if (!equityRef.value) return
+  const echarts = await getEcharts()
   if (!equityRef.value) return
   if (!equityChart) equityChart = echarts.init(equityRef.value)
   equityChart.setOption({
@@ -273,7 +229,10 @@ function fmt(n) { return n == null ? '-' : Number(n).toLocaleString('zh-CN', { m
 function fmtPct(n) { return n == null ? '-' : Number(n).toFixed(2) + '%' }
 
 onMounted(async () => {
-  if (auth.isLoggedIn()) user.value = { email: '已登录' }
+  try {
+    const me = await api.me()
+    if (me.code === 200 && me.data) user.value = me.data
+  } catch (e) { user.value = null }
   await Promise.all([loadKline(), loadRealtime(), loadJdKline()])
   loadJdLive()
   jdPollTimer = setInterval(loadJdLive, 30000)

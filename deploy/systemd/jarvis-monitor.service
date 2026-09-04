@@ -1,0 +1,18 @@
+[Unit]
+Description=JARVIS production health monitor
+After=network-online.target jarvis-java.service jarvis-ai.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+EnvironmentFile=-/etc/jarvis/monitor.env
+ExecStart=/usr/local/sbin/jarvis-monitor
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadOnlyPaths=/etc/jarvis /var/backups/jarvis
+ReadWritePaths=/var/lib/jarvis-monitor
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6

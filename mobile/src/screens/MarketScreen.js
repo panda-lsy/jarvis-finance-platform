@@ -23,8 +23,8 @@ export default function MarketScreen() {
         api.prices(),
         api.kline({ market: 'gold_etf', limit: 60 }),
       ])
-      setPrices(p.prices.gold_etf || null)
-      setKline(k.data || [])
+      setPrices(p.data?.gold_etf || null)
+      setKline(k.data?.data || [])
     } catch (e) {
       setPrices(null)
     } finally {
@@ -35,7 +35,7 @@ export default function MarketScreen() {
 
   useEffect(() => { load() }, [])
 
-  const realtime = prices && prices.realtime
+  const realtime = prices
   const closes = kline.map((x) => x.close)
   const dates = kline.map((x) => x.date.slice(5))
 

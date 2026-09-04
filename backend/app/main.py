@@ -1,203 +1,47 @@
 #!/usr/bin/env python3
 """
-贾维斯·黄金 - 本机后端服务 (FastAPI)
-提供: 实时价 / 历史K线 / 回测 / 存储概览 API
-本机持久化: SQLite (data/gold.db)
+JARVIS Python AI Service
+
+职责边界：
+- Python 仅负责与大模型/AI 能力交互。
+- 用户、交易、行情、K线、回测与业务持久化统一由 Java 主后端负责。
+- 本服务只接受携带 PYTHON_SERVICE_TOKEN 的 Java 内部请求。
 """
-from typing import Optional
-from contextlib import asynccontextmanager
+from fastapi import Depends, FastAPI, HTTPException
 
-from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from . import ai_service
+from .ai_routes import require_internal_service, router as ai_router
 
-from .db import PriceStore
-from .price_source import MARKETS as SOURCE_MARKETS
-from . import scheduler
-from .backtest import run_backtest
-from .ai_routes import router as ai_router
-from .jd_ws import ws_handler, start_poller
-
-store = PriceStore()
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # 启动时先加载历史 + 启动后台周期抓取
-    scheduler.load_historical(store, count=120)
-    scheduler.start_background(interval=300)
-    # 京东积存金双源轮询 (每 1 分钟) + WS 推送
-    import asyncio
-    start_poller(store, asyncio.get_running_loop())
-    yield
-
-
-app = FastAPI(title="JARVIS Gold Backend", version="1.1.0", lifespan=lifespan)
-
-# AI 接口 (DeepSeek, Python 直连)
+app = FastAPI(title="JARVIS AI Service", version="2.0.0")
 app.include_router(ai_router)
 
-# CORS: 允许 GitHub Pages 前端跨域访问
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
-
-@app.get("/api/health")
+@app.get("/api/health", dependencies=[Depends(require_internal_service)])
 def health():
+    """Liveness：仅表示 Python 进程和 FastAPI 可响应。"""
     return {
         "status": "ok",
-        "service": "jarvis-gold-backend",
+        "service": "jarvis-ai-service (python)",
+        "role": "ai-only",
         "time": __import__("datetime").datetime.now().isoformat(),
     }
 
 
-@app.websocket("/ws/prices")
-async def ws_prices(websocket: WebSocket):
-    """WS 实时金价: 京东积存金双源, 每 1 分钟推送"""
-    await ws_handler(websocket)
-
-
-@app.get("/api/jd/prices")
-def jd_prices():
-    """京东积存金实时价 (最近抓取值, 立即返回)"""
-    from .jd_ws import _last_push
-    return {"code": 200, "message": "ok", "data": _last_push}
-
-
-@app.get("/api/jd/snapshots")
-def jd_snapshots(limit: int = 60):
-    """京东价持久化快照 (回测/图表用)"""
-    out = {}
-    for key in ("jd_zheshang", "jd_minsheng"):
-        snaps = store.get_snapshots(key, limit=limit)
-        if snaps:
-            out[key] = snaps
-    return {"code": 200, "message": "ok", "data": out}
-
-
-@app.get("/api/jd/kline")
-def jd_kline(
-    market: str = Query("zheshang", description="zheshang / minsheng"),
-    interval: int = Query(5, description="K线周期(分钟): 1/5/15/30/60"),
-    limit: int = Query(200, ge=1, le=2000),
-):
-    """京东积存金分钟K线: 由每分钟持久化快照聚合生成
-    前端绘制K线时请求本接口
-    """
-    key = f"jd_{market}"
-    snaps = store.get_snapshots(key, limit=2000)
-    if not snaps:
-        return {"market": market, "interval": interval, "count": 0, "data": []}
-
-    from datetime import datetime as _dt
-
-    # 按 interval 分钟对齐桶, 聚合 OHLC
-    buckets = {}
-    for s in snaps:
-        try:
-            t = _dt.fromisoformat(s["ts"])
-        except Exception:
-            continue
-        bucket_ts = (int(t.timestamp()) // (interval * 60)) * (interval * 60)
-        bar = buckets.setdefault(bucket_ts, {"open": None, "high": None, "low": None, "close": None, "ts": bucket_ts * 1000})
-        p = float(s["price"])
-        bar["open"] = p if bar["open"] is None else bar["open"]
-        bar["high"] = p if bar["high"] is None else max(bar["high"], p)
-        bar["low"] = p if bar["low"] is None else min(bar["low"], p)
-        bar["close"] = p
-
-    bars = sorted(buckets.values(), key=lambda b: b["ts"])
-    # 转换日期格式 (与现有K线一致)
-    for b in bars:
-        b["date"] = _dt.fromtimestamp(b["ts"] / 1000).strftime("%Y-%m-%d %H:%M")
-        b["volume"] = 0
-    out = bars[-limit:]
+@app.get("/api/ready", dependencies=[Depends(require_internal_service)])
+def ready():
+    """Readiness：AI Provider/Key 必须已配置，发布流程才视为可服务。"""
+    caps = ai_service.capabilities()
+    if not caps.get("available"):
+        raise HTTPException(status_code=503, detail=caps.get("message") or "AI provider unavailable")
     return {
-        "market": market,
-        "interval": interval,
-        "count": len(out),
-        "range": {"min": out[0]["date"] if out else None, "max": out[-1]["date"] if out else None, "count": len(out)},
-        "data": out,
+        "status": "ready",
+        "service": "jarvis-ai-service (python)",
+        "provider": caps.get("provider"),
+        "model": caps.get("model"),
     }
-
-
-@app.get("/api/markets")
-def markets():
-    """支持的标的一览"""
-    return {"markets": [
-        {"key": key, "symbol": cfg["symbol"], "label": cfg["label"]}
-        for key, cfg in SOURCE_MARKETS.items()
-    ]}
-
-
-@app.get("/api/prices")
-def prices():
-    """各标的最新实时价 (+最近一条已记录快照)"""
-    from .price_source import fetch_realtime
-    out = {}
-    for key, cfg in SOURCE_MARKETS.items():
-        r = fetch_realtime(cfg["symbol"])
-        snaps = store.get_snapshots(key, limit=1)
-        out[key] = {
-            "label": cfg["label"],
-            "symbol": cfg["symbol"],
-            "realtime": r,
-            "last_stored": snaps[0] if snaps else None,
-        }
-        if r and r.get("price"):
-            store.record_snapshot(key, r["price"], r.get("change_pct"))
-    return {"prices": out}
-
-
-@app.get("/api/kline")
-def kline(
-    market: str = Query("gold_etf"),
-    limit: int = Query(120, ge=1, le=5000),
-    start: Optional[str] = None,
-    end: Optional[str] = None,
-):
-    """历史K线
-    - gold_etf: SQLite 持久化数据
-    - london_gold: 新浪实时抓取 (伦敦金)
-    """
-    if market == "london_gold":
-        from .price_source import fetch_kline
-        data = fetch_kline("hf_XAU", count=limit)
-        rng = {"min": data[0]["date"] if data else None,
-               "max": data[-1]["date"] if data else None,
-               "count": len(data)}
-        return {"market": market, "range": rng, "count": len(data), "data": data}
-    data = store.get_kline(market, limit=limit, start=start, end=end)
-    rng = store.kline_date_range(market)
-    return {"market": market, "range": rng, "count": len(data), "data": data}
-
-
-@app.get("/api/backtest")
-def backtest(
-    market: str = Query("gold_etf"),
-    short_ma: int = Query(5, ge=1),
-    long_ma: int = Query(20, ge=2),
-    initial_cash: float = Query(100000, gt=0),
-    limit: int = Query(120, ge=1, le=5000),
-):
-    """双均线策略回测"""
-    klines = store.get_kline(market, limit=limit)
-    if klines:
-        for k in klines:
-            k["symbol"] = market
-    return run_backtest(klines, short_ma=short_ma, long_ma=long_ma, initial_cash=initial_cash)
-
-
-@app.get("/api/storage")
-def storage():
-    """存储概览"""
-    return {"summary": store.summary()}
 
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("app.main:app", host="0.0.0.0", port=8100, reload=True)
+
+    uvicorn.run("app.main:app", host="127.0.0.1", port=8100, reload=False)

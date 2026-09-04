@@ -33,6 +33,7 @@ public class User {
     @Column(length = 60)
     private String displayName;
 
+    @Builder.Default
     @Column(nullable = false)
     private boolean enabled = true;
 

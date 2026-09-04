@@ -1,6 +1,6 @@
 <script setup>
 import { ref } from 'vue'
-import { api, auth } from '../api/client'
+import { api } from '../api/client'
 
 const emit = defineEmits(['logged-in'])
 const mode = ref('login')           // login | register
@@ -26,8 +26,7 @@ async function submit() {
     } else {
       res = await api.login(email.value, password.value)
     }
-    if (res.code === 200 && res.data && res.data.token) {
-      auth.token = res.data.token
+    if (res.code === 200 && res.data?.user) {
       emit('logged-in', res.data.user)
     } else {
       error.value = res.message || '操作失败'
@@ -67,7 +66,8 @@ function switchMode() {
           <label>密码</label>
           <div class="pwd-row">
             <input :type="showPwd ? 'text' : 'password'" v-model="password"
-                   placeholder="至少6位" autocomplete="current-password" />
+                   :placeholder="mode === 'register' ? '至少10位' : '请输入密码'"
+                   :autocomplete="mode === 'register' ? 'new-password' : 'current-password'" />
             <button type="button" class="eye" @click="showPwd = !showPwd">{{ showPwd ? '🙈' : '👁' }}</button>
           </div>
         </div>

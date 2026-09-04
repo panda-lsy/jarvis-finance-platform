@@ -6,6 +6,7 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 /**
@@ -32,24 +33,29 @@ public class SimPosition {
     private String symbol;
 
     /** 持有数量(股/份额) */
-    @Column(nullable = false)
-    private Double quantity = 0.0;
+    @Builder.Default
+    @Column(nullable = false, precision = 24, scale = 8)
+    private BigDecimal quantity = BigDecimal.ZERO;
 
     /** 平均成本 */
-    @Column(name = "avg_cost", nullable = false)
-    private Double avgCost = 0.0;
+    @Builder.Default
+    @Column(name = "avg_cost", nullable = false, precision = 24, scale = 8)
+    private BigDecimal avgCost = BigDecimal.ZERO;
 
     /** 杠杆倍数 (1.0 = 全款买入; >1 为杠杆) */
-    @Column(name = "leverage")
-    private Double leverage = 1.0;
+    @Builder.Default
+    @Column(name = "leverage", precision = 8, scale = 4)
+    private BigDecimal leverage = BigDecimal.ONE;
 
     /** 借款金额 (杠杆部分) */
-    @Column(name = "loan_amount")
-    private Double loanAmount = 0.0;
+    @Builder.Default
+    @Column(name = "loan_amount", precision = 19, scale = 4)
+    private BigDecimal loanAmount = BigDecimal.ZERO;
 
     /** 累计投入保证金 */
-    @Column(name = "margin_used")
-    private Double marginUsed = 0.0;
+    @Builder.Default
+    @Column(name = "margin_used", precision = 19, scale = 4)
+    private BigDecimal marginUsed = BigDecimal.ZERO;
 
     @Column(name = "updated_at")
     private LocalDateTime updatedAt;

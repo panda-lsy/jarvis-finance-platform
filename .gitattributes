@@ -1,0 +1,32 @@
+# Repository-wide line ending policy.
+* text=auto
+
+# Source/config files are normalized to LF in Git.
+*.sh text eol=lf
+*.py text eol=lf
+*.java text eol=lf
+*.js text eol=lf
+*.vue text eol=lf
+*.json text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.xml text eol=lf
+*.md text eol=lf
+*.html text eol=lf
+*.css text eol=lf
+*.svg text eol=lf
+
+# Windows PowerShell scripts keep CRLF for native Windows tooling.
+*.ps1 text eol=crlf
+
+# Binary/document formats must never be line-normalized.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.doc binary
+*.docx binary
+*.pptx binary
+*.xlsx binary

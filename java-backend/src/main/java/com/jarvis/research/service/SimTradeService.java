@@ -1,246 +1,398 @@
 package com.jarvis.research.service;
 
+import com.jarvis.research.audit.AuditService;
+import com.jarvis.research.market.PriceSnapshotRepository;
 import com.jarvis.research.user.*;
-import com.jarvis.research.service.GoldPriceService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.server.ResponseStatusException;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 /**
- * 模拟盘交易服务
- * 每用户独立: 资金 / 持仓 / 交易记录 互不干扰
+ * 模拟盘交易服务。
+ * 资金、价格、数量、保证金等持久化计算统一使用 BigDecimal，避免浮点累计误差。
  */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class SimTradeService {
 
+    private static final int MONEY_SCALE = 4;
+    private static final int VALUE_SCALE = 8;
+    private static final int RATIO_SCALE = 12;
+    private static final BigDecimal INITIAL_CASH = new BigDecimal("100000.0000");
+    private static final BigDecimal MIN_POSITION_QTY = new BigDecimal("0.00000001");
+
     private final SimAccountRepository accountRepository;
     private final SimPositionRepository positionRepository;
     private final SimTradeRepository tradeRepository;
-    private final GoldPriceService goldPriceService;
+    private final PriceSnapshotRepository priceSnapshotRepository;
+    private final AuditService auditService;
 
-    /** 获取或创建用户模拟账户 */
+    /** 获取或创建用户模拟账户。 */
     @Transactional
     public SimAccount getOrCreateAccount(Long userId) {
         return accountRepository.findByUserId(userId).orElseGet(() -> {
-            SimAccount a = SimAccount.builder()
-                    .userId(userId).initialCash(100000.0).cash(100000.0)
-                    .status("ACTIVE").createdAt(LocalDateTime.now()).build();
-            return accountRepository.save(a);
+            SimAccount account = SimAccount.builder()
+                    .userId(userId)
+                    .initialCash(INITIAL_CASH)
+                    .cash(INITIAL_CASH)
+                    .status("ACTIVE")
+                    .createdAt(LocalDateTime.now())
+                    .build();
+            return accountRepository.save(account);
         });
     }
 
-    /**
-     * 下单
-     * type: BUY / SELL
-     * symbol: sh518850 等
-     * leverage: 杠杆倍数 (默认 1.0; >1 为杠杆购入, 仅 BUY 支持)
-     * 使用实时价成交
-     */
+    /** 下单：BUY / SELL，杠杆 1~5x。 */
     @Transactional
-    public Map<String, Object> placeOrder(Long userId, String type, String symbol, Double quantity, Double leverage) {
-        SimAccount account = getOrCreateAccount(userId);
-        if (!"ACTIVE".equals(account.getStatus())) {
-            throw new IllegalArgumentException("模拟账户状态异常: " + account.getStatus());
+    public Map<String, Object> placeOrder(Long userId, String type, String symbol,
+                                          BigDecimal quantity, BigDecimal leverage,
+                                          String clientOrderId) {
+        SimAccount account = accountRepository.findByUserIdForUpdate(userId)
+                .orElseGet(() -> getOrCreateAccount(userId));
+
+        String typeUp = type == null ? "" : type.trim().toUpperCase();
+        String orderKey = normalizeOrderKey(clientOrderId);
+        BigDecimal qty = quantity == null ? BigDecimal.ZERO : quantity;
+        BigDecimal lev = leverage == null ? BigDecimal.ONE : leverage;
+
+        if (orderKey != null) {
+            SimTrade existing = tradeRepository.findByUserIdAndClientOrderId(userId, orderKey).orElse(null);
+            if (existing != null) {
+                boolean sameOrder = existing.getType().equals(typeUp)
+                        && existing.getSymbol().equals(symbol)
+                        && existing.getQuantity().compareTo(qty) == 0
+                        && nz(existing.getLeverage()).compareTo(lev) == 0;
+                if (!sameOrder) {
+                    throw new ResponseStatusException(HttpStatus.CONFLICT,
+                            "clientOrderId 已被另一笔订单使用");
+                }
+                return tradeResult(existing, true);
+            }
         }
-        if (quantity == null || quantity <= 0) {
+
+        if (!"ACTIVE".equals(account.getStatus())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "模拟账户状态异常: " + account.getStatus());
+        }
+        if (!"BUY".equals(typeUp) && !"SELL".equals(typeUp)) {
+            throw new IllegalArgumentException("type 必须为 BUY 或 SELL");
+        }
+        if (qty.compareTo(BigDecimal.ZERO) <= 0) {
             throw new IllegalArgumentException("数量必须大于0");
         }
         if (symbol == null || symbol.isBlank()) {
             throw new IllegalArgumentException("标的不合法");
         }
-
-        double lev = leverage == null ? 1.0 : leverage;
-        if (lev < 1.0 || lev > 10.0) {
-            throw new IllegalArgumentException("杠杆倍数需在 1~10 之间");
+        if (lev.compareTo(BigDecimal.ONE) < 0 || lev.compareTo(new BigDecimal("5")) > 0) {
+            throw new IllegalArgumentException("杠杆倍数需在 1~5 之间");
+        }
+        if ("SELL".equals(typeUp) && lev.compareTo(BigDecimal.ONE) != 0) {
+            throw new IllegalArgumentException("卖出订单 leverage 必须为1");
         }
 
-        // 取实时价
-        Map<String, Object> quote = goldPriceService.getRealtimeQuote(symbol);
-        Object priceObj = quote.get("price");
-        if (!(priceObj instanceof Number)) {
-            throw new IllegalArgumentException("无法获取行情, 下单失败");
-        }
-        double price = ((Number) priceObj).doubleValue();
-        double amount = price * quantity;   // 名义买入/卖出额
-        double margin = amount / lev;       // 自有保证金部分 (杠杆时 < amount)
-        double loan = amount - margin;      // 借款部分 (杠杆时 > 0)
+        QuoteValue executionQuote = quoteValue(symbol, true);
+        BigDecimal price = executionQuote.price();
+        BigDecimal amount = money(price.multiply(qty));
+        BigDecimal margin = "BUY".equals(typeUp)
+                ? money(amount.divide(lev, MONEY_SCALE, RoundingMode.HALF_UP))
+                : amount;
+        BigDecimal loan = "BUY".equals(typeUp) ? money(amount.subtract(margin)) : BigDecimal.ZERO;
 
-        String typeUp = type == null ? "" : type.toUpperCase();
         if ("BUY".equals(typeUp)) {
-            // 杠杆买入: 只冻结自有保证金, 其余为借款
-            if (account.getCash() < margin) {
-                throw new IllegalArgumentException("可用资金不足: 需保证金 " + round(margin)
-                        + ", 可用 " + round(account.getCash()));
-            }
-            account.setCash(round(account.getCash() - margin));
-            account.setLoanBalance(round((account.getLoanBalance() == null ? 0 : account.getLoanBalance()) + loan));
-            account.setFrozenMargin(round((account.getFrozenMargin() == null ? 0 : account.getFrozenMargin()) + margin));
-            accountRepository.save(account);
-
-            // 更新持仓
-            SimPosition pos = positionRepository.findByUserIdAndSymbol(userId, symbol).orElse(
-                    SimPosition.builder().userId(userId).symbol(symbol)
-                            .quantity(0.0).avgCost(0.0)
-                            .leverage(1.0).loanAmount(0.0).marginUsed(0.0).build());
-            double newQty = pos.getQuantity() + quantity;
-            double newLoan = (pos.getLoanAmount() == null ? 0 : pos.getLoanAmount()) + loan;
-            double newMargin = (pos.getMarginUsed() == null ? 0 : pos.getMarginUsed()) + margin;
-            // 总成本 = 投入保证金(自有) + 借款
-            double newCost = (newLoan + newMargin) / newQty;
-            pos.setQuantity(newQty);
-            pos.setAvgCost(round(newCost));
-            pos.setLoanAmount(round(newLoan));
-            pos.setMarginUsed(round(newMargin));
-            pos.setLeverage(round(newQty > 0 ? (newLoan + newMargin) / (newMargin > 0 ? newMargin : 1e-9) : 1.0));
-            pos.setUpdatedAt(LocalDateTime.now());
-            positionRepository.save(pos);
-        } else if ("SELL".equals(typeUp)) {
-            SimPosition pos = positionRepository.findByUserIdAndSymbol(userId, symbol)
-                    .orElseThrow(() -> new IllegalArgumentException("无该标的持仓"));
-            if (pos.getQuantity() < quantity) {
-                throw new IllegalArgumentException("持仓不足: 持有 " + pos.getQuantity()
-                        + ", 卖出 " + quantity);
-            }
-            // 按比例释放借款与保证金
-            double sellRatio = quantity / pos.getQuantity();
-            double releaseLoan = (pos.getLoanAmount() == null ? 0 : pos.getLoanAmount()) * sellRatio;
-            double releaseMargin = (pos.getMarginUsed() == null ? 0 : pos.getMarginUsed()) * sellRatio;
-            // 杠杆持仓卖出: 先还借款, 剩余归现金
-            double cashIn = amount - releaseLoan;
-            account.setCash(round(account.getCash() + cashIn));
-            account.setLoanBalance(round(Math.max(0, (account.getLoanBalance() == null ? 0 : account.getLoanBalance()) - releaseLoan)));
-            account.setFrozenMargin(round(Math.max(0, (account.getFrozenMargin() == null ? 0 : account.getFrozenMargin()) - releaseMargin)));
-            accountRepository.save(account);
-
-            pos.setQuantity(pos.getQuantity() - quantity);
-            pos.setLoanAmount(round(Math.max(0, (pos.getLoanAmount() == null ? 0 : pos.getLoanAmount()) - releaseLoan)));
-            pos.setMarginUsed(round(Math.max(0, (pos.getMarginUsed() == null ? 0 : pos.getMarginUsed()) - releaseMargin)));
-            pos.setAvgCost((pos.getQuantity() > 0 && pos.getLoanAmount() + pos.getMarginUsed() > 0)
-                    ? round((pos.getLoanAmount() + pos.getMarginUsed()) / pos.getQuantity()) : 0.0);
-            pos.setLeverage(pos.getQuantity() > 0 && pos.getMarginUsed() > 0
-                    ? round((pos.getLoanAmount() + pos.getMarginUsed()) / pos.getMarginUsed()) : 1.0);
-            pos.setUpdatedAt(LocalDateTime.now());
-            positionRepository.save(pos);
-            if (pos.getQuantity() <= 0.0001) {
-                positionRepository.delete(pos);
-            }
+            executeBuy(account, userId, symbol, qty, margin, loan);
         } else {
-            throw new IllegalArgumentException("type 必须为 BUY 或 SELL");
+            executeSell(account, userId, symbol, qty, amount);
         }
 
-        // 记录交易 (记录杠杆)
         SimTrade trade = SimTrade.builder()
-                .userId(userId).symbol(symbol).type(typeUp)
-                .price(price).quantity(quantity).amount(round(amount))
-                .leverage(round(lev))
-                .createdAt(LocalDateTime.now()).build();
+                .userId(userId)
+                .symbol(symbol)
+                .type(typeUp)
+                .clientOrderId(orderKey)
+                .price(value(price))
+                .quantity(value(qty))
+                .amount(amount)
+                .leverage(ratio(lev))
+                .createdAt(LocalDateTime.now())
+                .build();
         tradeRepository.save(trade);
+        auditService.record(userId, "SIM_ORDER", symbol, null,
+                typeUp + " qty=" + qty + " price=" + price + " clientOrderId=" + orderKey);
 
-        Map<String, Object> out = new LinkedHashMap<>();
-        out.put("type", typeUp);
-        out.put("symbol", symbol);
-        out.put("price", price);
-        out.put("quantity", quantity);
-        out.put("amount", round(amount));
-        out.put("leverage", round(lev));
-        out.put("margin", round(margin));
-        out.put("loan", round(loan));
-        out.put("message", typeUp + " 成交 @ " + price + (lev > 1 ? " (" + lev + "x 杠杆)" : ""));
+        Map<String, Object> out = tradeResult(trade, false);
+        if ("BUY".equals(typeUp)) {
+            out.put("margin", margin);
+            out.put("loan", loan);
+        }
         return out;
     }
 
-    /** 账户总览: 资金 + 持仓市值 + 总资产 + 持仓明细 + 杠杆/风险 */
-    @Transactional(readOnly = true)
-    public Map<String, Object> getAccountOverview(Long userId) {
-        SimAccount account = getOrCreateAccount(userId);
-        List<SimPosition> positions = positionRepository.findAllByUserId(userId);
+    private void executeBuy(SimAccount account, Long userId, String symbol,
+                            BigDecimal quantity, BigDecimal margin, BigDecimal loan) {
+        BigDecimal cash = nz(account.getCash());
+        if (cash.compareTo(margin) < 0) {
+            throw new IllegalArgumentException("可用资金不足: 需保证金 " + margin + ", 可用 " + cash);
+        }
+        account.setCash(money(cash.subtract(margin)));
+        account.setLoanBalance(money(nz(account.getLoanBalance()).add(loan)));
+        account.setFrozenMargin(money(nz(account.getFrozenMargin()).add(margin)));
+        accountRepository.save(account);
 
-        double marketValue = 0.0;
-        double loanTotal = 0.0;
-        double marginTotal = 0.0;
-        Map<String, Object> posList = new LinkedHashMap<>();
-        for (SimPosition p : positions) {
-            double cur = quotePrice(p.getSymbol());
-            double mv = cur * p.getQuantity();
-            marketValue += mv;
-            double pLoan = p.getLoanAmount() == null ? 0 : p.getLoanAmount();
-            double pMargin = p.getMarginUsed() == null ? 0 : p.getMarginUsed();
-            loanTotal += pLoan;
-            marginTotal += pMargin;
-            double invested = pLoan + pMargin;
-            double pnl = mv - invested;
-            Map<String, Object> detail = new LinkedHashMap<>();
-            detail.put("symbol", p.getSymbol());
-            detail.put("quantity", p.getQuantity());
-            detail.put("avgCost", round(p.getAvgCost()));
-            detail.put("currentPrice", cur);
-            detail.put("marketValue", round(mv));
-            detail.put("leverage", p.getLeverage() == null ? 1.0 : round(p.getLeverage()));
-            detail.put("loan", round(pLoan));
-            detail.put("profit", round(pnl));
-            detail.put("profitPct", invested > 0 ? round((pnl / invested) * 100) : 0.0);
-            detail.put("returnOnEquity", marginTotal > 0
-                    ? round((mv - (loanTotal + marginTotal)) / marginTotal * 100) : 0.0);
-            posList.put(p.getSymbol(), detail);
+        SimPosition pos = positionRepository.findByUserIdAndSymbol(userId, symbol).orElse(
+                SimPosition.builder()
+                        .userId(userId)
+                        .symbol(symbol)
+                        .build());
+        BigDecimal newQty = nz(pos.getQuantity()).add(quantity);
+        BigDecimal newLoan = nz(pos.getLoanAmount()).add(loan);
+        BigDecimal newMargin = nz(pos.getMarginUsed()).add(margin);
+        BigDecimal invested = newLoan.add(newMargin);
+
+        pos.setQuantity(value(newQty));
+        pos.setAvgCost(newQty.signum() > 0
+                ? value(invested.divide(newQty, VALUE_SCALE, RoundingMode.HALF_UP))
+                : BigDecimal.ZERO);
+        pos.setLoanAmount(money(newLoan));
+        pos.setMarginUsed(money(newMargin));
+        pos.setLeverage(newMargin.signum() > 0
+                ? ratio(invested.divide(newMargin, VALUE_SCALE, RoundingMode.HALF_UP))
+                : BigDecimal.ONE);
+        pos.setUpdatedAt(LocalDateTime.now());
+        positionRepository.save(pos);
+    }
+
+    private void executeSell(SimAccount account, Long userId, String symbol,
+                             BigDecimal quantity, BigDecimal amount) {
+        SimPosition pos = positionRepository.findByUserIdAndSymbol(userId, symbol)
+                .orElseThrow(() -> new IllegalArgumentException("无该标的持仓"));
+        BigDecimal oldQty = nz(pos.getQuantity());
+        if (oldQty.compareTo(quantity) < 0) {
+            throw new IllegalArgumentException("持仓不足: 持有 " + oldQty + ", 卖出 " + quantity);
         }
 
-        double totalAssets = account.getCash() + marketValue;
-        double netEquity = totalAssets - (account.getLoanBalance() == null ? 0 : account.getLoanBalance());
-        double equity = account.getCash() + ((account.getFrozenMargin() == null ? 0 : account.getFrozenMargin()) == 0
-                ? marketValue - (account.getLoanBalance() == null ? 0 : account.getLoanBalance())
-                : marketValue - (account.getLoanBalance() == null ? 0 : account.getLoanBalance()));
-        double totalReturn = account.getInitialCash() > 0
-                ? (netEquity / account.getInitialCash() - 1) * 100 : 0;
-        // 维持保证金率 = 净资产 / 市值
-        double maint = marketValue > 0 ? round((netEquity / marketValue) * 100) : 100.0;
-        String riskStatus = marketValue == 0 ? "NONE"
-                : (maint < 30 ? "DANGER" : (maint < 50 ? "WARN" : "SAFE"));
+        BigDecimal sellRatio = quantity.divide(oldQty, RATIO_SCALE, RoundingMode.HALF_UP);
+        BigDecimal releaseLoan = money(nz(pos.getLoanAmount()).multiply(sellRatio));
+        BigDecimal releaseMargin = money(nz(pos.getMarginUsed()).multiply(sellRatio));
+        BigDecimal cashIn = money(amount.subtract(releaseLoan));
+
+        account.setCash(money(nz(account.getCash()).add(cashIn)));
+        account.setLoanBalance(money(maxZero(nz(account.getLoanBalance()).subtract(releaseLoan))));
+        account.setFrozenMargin(money(maxZero(nz(account.getFrozenMargin()).subtract(releaseMargin))));
+        accountRepository.save(account);
+
+        BigDecimal remainQty = maxZero(oldQty.subtract(quantity));
+        BigDecimal remainLoan = money(maxZero(nz(pos.getLoanAmount()).subtract(releaseLoan)));
+        BigDecimal remainMargin = money(maxZero(nz(pos.getMarginUsed()).subtract(releaseMargin)));
+        pos.setQuantity(value(remainQty));
+        pos.setLoanAmount(remainLoan);
+        pos.setMarginUsed(remainMargin);
+
+        BigDecimal remainInvested = remainLoan.add(remainMargin);
+        pos.setAvgCost(remainQty.signum() > 0 && remainInvested.signum() > 0
+                ? value(remainInvested.divide(remainQty, VALUE_SCALE, RoundingMode.HALF_UP))
+                : BigDecimal.ZERO);
+        pos.setLeverage(remainQty.signum() > 0 && remainMargin.signum() > 0
+                ? ratio(remainInvested.divide(remainMargin, VALUE_SCALE, RoundingMode.HALF_UP))
+                : BigDecimal.ONE);
+        pos.setUpdatedAt(LocalDateTime.now());
+
+        if (remainQty.compareTo(MIN_POSITION_QTY) <= 0) {
+            positionRepository.delete(pos);
+        } else {
+            positionRepository.save(pos);
+        }
+    }
+
+    /** 账户总览。 */
+    @Transactional(readOnly = true)
+    public Map<String, Object> getAccountOverview(Long userId) {
+        SimAccount account = accountRepository.findByUserId(userId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "模拟账户不存在"));
+        List<SimPosition> positions = positionRepository.findAllByUserId(userId);
+
+        BigDecimal marketValue = BigDecimal.ZERO;
+        Map<String, Object> posList = new LinkedHashMap<>();
+        for (SimPosition pos : positions) {
+            QuoteValue quote = quoteValue(pos.getSymbol(), false);
+            BigDecimal currentPrice = quote.price();
+            BigDecimal mv = money(currentPrice.multiply(nz(pos.getQuantity())));
+            marketValue = marketValue.add(mv);
+            BigDecimal posLoan = nz(pos.getLoanAmount());
+            BigDecimal posMargin = nz(pos.getMarginUsed());
+            BigDecimal invested = posLoan.add(posMargin);
+            BigDecimal pnl = money(mv.subtract(invested));
+
+            Map<String, Object> detail = new LinkedHashMap<>();
+            detail.put("symbol", pos.getSymbol());
+            detail.put("quantity", pos.getQuantity());
+            detail.put("avgCost", pos.getAvgCost());
+            detail.put("currentPrice", currentPrice);
+            detail.put("quoteTime", quote.ts());
+            detail.put("stale", quote.stale());
+            detail.put("marketValue", mv);
+            detail.put("leverage", pos.getLeverage() == null ? BigDecimal.ONE : pos.getLeverage());
+            detail.put("loan", posLoan);
+            detail.put("profit", pnl);
+            detail.put("profitPct", percent(pnl, invested));
+            detail.put("returnOnEquity", percent(pnl, posMargin));
+            posList.put(pos.getSymbol(), detail);
+        }
+
+        marketValue = money(marketValue);
+        BigDecimal cash = nz(account.getCash());
+        BigDecimal loanBalance = nz(account.getLoanBalance());
+        BigDecimal frozenMargin = nz(account.getFrozenMargin());
+        BigDecimal totalAssets = money(cash.add(marketValue));
+        BigDecimal netEquity = money(totalAssets.subtract(loanBalance));
+        double totalReturn = percent(netEquity.subtract(nz(account.getInitialCash())), nz(account.getInitialCash()));
+        double maint = marketValue.signum() > 0 ? percent(netEquity, marketValue) : 100.0;
+        String riskStatus = marketValue.signum() == 0 ? "NONE"
+                : (maint < SimRiskService.LIQUIDATION_MAINT_PCT
+                    ? "DANGER"
+                    : (maint < SimRiskService.WARN_MAINT_PCT ? "WARN" : "SAFE"));
 
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("initialCash", account.getInitialCash());
-        out.put("cash", round(account.getCash()));
-        out.put("marketValue", round(marketValue));
-        out.put("totalAssets", round(totalAssets));
-        out.put("loanBalance", round(account.getLoanBalance() == null ? 0 : account.getLoanBalance()));
-        out.put("frozenMargin", round(account.getFrozenMargin() == null ? 0 : account.getFrozenMargin()));
-        out.put("netEquity", round(netEquity));
+        out.put("cash", cash);
+        out.put("marketValue", marketValue);
+        out.put("totalAssets", totalAssets);
+        out.put("loanBalance", loanBalance);
+        out.put("frozenMargin", frozenMargin);
+        out.put("netEquity", netEquity);
         out.put("maintMarginPct", maint);
         out.put("riskStatus", riskStatus);
-        out.put("totalReturnPct", round(totalReturn));
+        out.put("totalReturnPct", totalReturn);
         out.put("status", account.getStatus());
         out.put("positions", posList);
         return out;
     }
 
-    /** 交易记录 */
+    /** 交易记录。 */
     @Transactional(readOnly = true)
     public Map<String, Object> getTrades(Long userId, int limit) {
+        if (limit < 1 || limit > 200) {
+            throw new IllegalArgumentException("limit 必须在 1~200 之间");
+        }
         List<SimTrade> trades = tradeRepository
                 .findByUserIdOrderByCreatedAtDesc(userId, PageRequest.of(0, limit));
         long total = tradeRepository.countByUserId(userId);
         return Map.of("total", total, "trades", trades);
     }
 
-    private double quotePrice(String symbol) {
+    private Map<String, Object> tradeResult(SimTrade trade, boolean replay) {
+        BigDecimal lev = trade.getLeverage() == null ? BigDecimal.ONE : trade.getLeverage();
+        BigDecimal amount = nz(trade.getAmount());
+        BigDecimal margin = "BUY".equals(trade.getType())
+                ? money(amount.divide(lev, MONEY_SCALE, RoundingMode.HALF_UP))
+                : amount;
+        BigDecimal loan = "BUY".equals(trade.getType()) ? money(amount.subtract(margin)) : BigDecimal.ZERO;
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("type", trade.getType());
+        out.put("symbol", trade.getSymbol());
+        out.put("price", trade.getPrice());
+        out.put("quantity", trade.getQuantity());
+        out.put("amount", amount);
+        out.put("leverage", lev);
+        out.put("margin", margin);
+        out.put("loan", loan);
+        out.put("clientOrderId", trade.getClientOrderId());
+        out.put("idempotentReplay", replay);
+        out.put("message", trade.getType() + " 成交 @ " + trade.getPrice()
+                + (lev.compareTo(BigDecimal.ONE) > 0 ? " (" + lev.stripTrailingZeros().toPlainString() + "x 杠杆)" : "")
+                + (replay ? " [幂等重放]" : ""));
+        return out;
+    }
+
+    private QuoteValue quoteValue(String symbol, boolean requireFresh) {
+        String market = switch (symbol) {
+            case "sh518850" -> "gold_etf";
+            case "hf_XAU" -> "london_gold";
+            case "jd_zheshang" -> "jd_zheshang";
+            case "jd_minsheng" -> "jd_minsheng";
+            default -> null;
+        };
+        if (market == null) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                    "无法获取 " + symbol + " 的有效行情");
+        }
+
+        var snapshot = priceSnapshotRepository.findTopByMarketOrderByTsDesc(market)
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.SERVICE_UNAVAILABLE,
+                        "无法获取 " + symbol + " 的有效行情"));
+        BigDecimal price = asDecimal(snapshot.getPrice());
+        if (price == null || price.signum() <= 0) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                    "无法获取 " + symbol + " 的有效行情");
+        }
+
+        long maxAgeSeconds = market.startsWith("jd_") ? 180L : 120L;
+        LocalDateTime now = LocalDateTime.now();
+        boolean stale = snapshot.getTs() == null
+                || snapshot.getTs().isBefore(now.minusSeconds(maxAgeSeconds));
+        if (requireFresh && stale) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                    "行情已过期，暂停成交: " + symbol);
+        }
+        return new QuoteValue(value(price), snapshot.getTs(), stale);
+    }
+
+    private record QuoteValue(BigDecimal price, LocalDateTime ts, boolean stale) {}
+
+    private String normalizeOrderKey(String clientOrderId) {
+        if (clientOrderId == null) return null;
+        String key = clientOrderId.trim();
+        if (key.isEmpty()) return null;
+        if (key.length() > 64) throw new IllegalArgumentException("clientOrderId 长度不能超过64字符");
+        return key;
+    }
+
+    private BigDecimal nz(BigDecimal value) {
+        return value == null ? BigDecimal.ZERO : value;
+    }
+
+    private BigDecimal money(BigDecimal value) {
+        return value.setScale(MONEY_SCALE, RoundingMode.HALF_UP);
+    }
+
+    private BigDecimal value(BigDecimal value) {
+        return value.setScale(VALUE_SCALE, RoundingMode.HALF_UP);
+    }
+
+    private BigDecimal ratio(BigDecimal value) {
+        return value.setScale(4, RoundingMode.HALF_UP);
+    }
+
+    private BigDecimal maxZero(BigDecimal value) {
+        return value.signum() < 0 ? BigDecimal.ZERO : value;
+    }
+
+    private BigDecimal asDecimal(Object value) {
+        if (value == null) return null;
         try {
-            Map<String, Object> q = goldPriceService.getRealtimeQuote(symbol);
-            Object p = q.get("price");
-            return p instanceof Number ? ((Number) p).doubleValue() : 0.0;
-        } catch (Exception e) {
-            return 0.0;
+            return new BigDecimal(String.valueOf(value));
+        } catch (NumberFormatException e) {
+            return null;
         }
     }
 
-    private double round(double v) {
-        return Math.round(v * 100.0) / 100.0;
+    private double percent(BigDecimal numerator, BigDecimal denominator) {
+        if (denominator == null || denominator.signum() == 0) return 0.0;
+        return numerator.multiply(new BigDecimal("100"))
+                .divide(denominator, 4, RoundingMode.HALF_UP)
+                .doubleValue();
     }
 }

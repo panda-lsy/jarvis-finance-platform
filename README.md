@@ -41,53 +41,52 @@ gold-trading/
     └── deploy-frontend.yml   # ★ 部署 Vue 前端到 GitHub Pages
 ```
 
-## ★ 新增架构：Java 主后端 + Python 辅助微服务 + 前端分离
+## ★ 当前架构：Java 唯一业务后端 + Python 内部 AI 服务 + 前端分离
 
-在原有 AI 全栈基础上，新增了轻量分离架构（暂不部署本地 AI 模块）：
+当前生产边界已经统一：浏览器只访问 Java，Python 不再承载行情、SQLite、回测或交易数据。
 
-- **Java 主后端** (`java-backend/`, Spring Boot 3, 端口 8200): 金融数据交互 + DeepSeek 大模型集成。负责业务 API / 行情 / AI 投研分析。
-- **Python 辅助微服务** (`backend/`, FastAPI, 端口 8100): 仅保留数据采集 / AI 预处理，被 Java 回退调用。
-- **DeepSeek 接入**: 兼容 OpenAI Chat / Responses / Anthropic Messages 三种协议，`AiGateway` 统一路由。
-- **前端** (`frontend/` Vue 3 + `mobile/` React Native) + **数据源** (腾讯财经)。
+- **Java 主后端** (`java-backend/`, Spring Boot 3, 端口 8200): 用户/JWT、行情采集与落库、K 线、回测、模拟交易、风控强平、审计边界，以及对 Python AI 的内部代理。
+- **Python AI 服务** (`backend/`, FastAPI, 端口 8100): 仅负责 LLM/AI 推理接口；只接受 Java 携带内部服务令牌的调用。
+- **前端** (`frontend/` Vue 3): 只调用 Java `/api/**`，不直连 Python 或第三方行情源。
+- **数据库**: 本地开发默认 H2；生产使用 PostgreSQL + Flyway。
 
 ### Java 主后端启动
 
 ```bash
 cd java-backend
-export DEEPSEEK_API_KEY=<Key>
+export JWT_SECRET=<至少32字符的随机密钥>
+export PYTHON_SERVICE_TOKEN=<Java与Python共享的内部随机令牌>
 mvn spring-boot:run        # 端口 8200
 ```
 
 ### Python 辅助微服务启动
 
 ```bash
-cd backend && python -m uvicorn app.main:app --host 0.0.0.0 --port 8100
+cd backend
+pip install -r requirements.txt
+export PYTHON_SERVICE_TOKEN=<与Java一致>
+export DEEPSEEK_API_KEY=<AI Key>
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8100
 ```
 
 详细说明见 `java-backend/README.md` 与 `backend/README.md`。
 
 
-### 本机后端启动
+### 生产 PostgreSQL
 
-```bash
-cd backend
-pip install -r requirements.txt
-export GOLD_DB_PATH=$(pwd)/data/gold.db   # 可选
-python -m uvicorn app.main:app --host 0.0.0.0 --port 8100
-```
+生产环境使用 `SPRING_PROFILES_ACTIVE=prod`，并配置 `DB_URL`、`DB_USERNAME`、`DB_PASSWORD`；Flyway 自动管理 schema，Hibernate 仅做 `validate`。
 
 ### Vue 前端启动 (本地)
 
 ```bash
 cd frontend
 npm install
-npm run dev   # http://localhost:5173/gold-trading/ (代理 -> :8100)
+npm run dev   # http://localhost:5173/ (仅代理 /api -> Java :8200)
 ```
 
 ### GitHub Pages 部署
 
-推送 `main` 且改动 `frontend/` 即自动构建部署；访问时用 `?api=` 指定本机后端：
-`https://<user>.github.io/gold-trading/?api=http://<本机IP>:8100`
+推送 `main` 且改动 `frontend/` 即自动构建部署；生产前端统一访问 `https://agent.shengxia.me/api/**`。
 
 ### React Native 移动端
 

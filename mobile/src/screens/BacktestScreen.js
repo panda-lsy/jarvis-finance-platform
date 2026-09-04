@@ -28,7 +28,8 @@ export default function BacktestScreen() {
         initial_cash: Number(cash),
         limit: 120,
       })
-      setResult(d)
+      if (d.code !== 200 || !d.data) throw new Error(d.message || '回测失败')
+      setResult(d.data)
     } catch (e) {
       setError('回测失败: ' + e.message)
     } finally {

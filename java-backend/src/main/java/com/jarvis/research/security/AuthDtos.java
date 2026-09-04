@@ -5,6 +5,8 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
 
+import java.math.BigDecimal;
+
 /**
  * 认证请求/响应 DTO
  */
@@ -14,12 +16,14 @@ public class AuthDtos {
     public static class RegisterRequest {
         @NotBlank(message = "邮箱不能为空")
         @Email(message = "邮箱格式不正确")
+        @Size(max = 120, message = "邮箱长度不能超过120字符")
         private String email;
 
         @NotBlank(message = "密码不能为空")
-        @Size(min = 6, max = 64, message = "密码长度需6-64位")
+        @Size(min = 10, max = 72, message = "密码长度需10-72位")
         private String password;
 
+        @Size(max = 60, message = "昵称长度不能超过60字符")
         private String displayName;
     }
 
@@ -27,9 +31,11 @@ public class AuthDtos {
     public static class LoginRequest {
         @NotBlank(message = "邮箱不能为空")
         @Email(message = "邮箱格式不正确")
+        @Size(max = 120, message = "邮箱长度不能超过120字符")
         private String email;
 
         @NotBlank(message = "密码不能为空")
+        @Size(max = 72, message = "密码长度不能超过72位")
         private String password;
     }
 
@@ -52,7 +58,7 @@ public class AuthDtos {
         private Long id;
         private String email;
         private String displayName;
-        private Double simCash;
-        private Double simInitialCash;
+        private BigDecimal simCash;
+        private BigDecimal simInitialCash;
     }
 }

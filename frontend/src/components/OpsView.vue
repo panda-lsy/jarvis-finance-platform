@@ -2,15 +2,32 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { api } from '../api/client'
 
-const java = ref(null)   // Java 数据存储
-const py = ref(null)     // Python 行情+AI
+const java = ref(null)   // Java + DB readiness
+const db = ref(null)     // 数据库详细状态（登录后）
+const py = ref(null)     // Python AI 服务（经 Java 代理检查）
+const engine = ref(null) // AI provider/model
 const lastCheck = ref('')
 let timer = null
 
 async function check() {
   lastCheck.value = new Date().toLocaleTimeString('zh-CN')
-  try { const d = await api.health(); java.value = d.data } catch (e) { java.value = { error: String(e) } }
-  try { const d = await api.pyHealth(); py.value = d.data ?? d } catch (e) { py.value = { error: String(e) } }
+  try {
+    const d = await api.healthReady()
+    java.value = d.code === 200 && d.data?.status === 'ready' ? d.data : { error: d.message || 'Java/DB not ready' }
+  } catch (e) { java.value = { error: String(e) } }
+  try {
+    const d = await api.databaseHealth()
+    db.value = d.code === 200 ? d.data : { error: d.message || '数据库不可用' }
+  } catch (e) { db.value = { error: String(e) } }
+  try {
+    const d = await api.aiServiceHealth()
+    const value = d.data ?? d
+    py.value = d.code === 200 || d.status === 'ready' ? value : { error: d.message || 'AI服务不可用' }
+  } catch (e) { py.value = { error: String(e) } }
+  try {
+    const d = await api.aiStatus()
+    engine.value = d.data?.available ? d.data : { error: d.data?.message || d.message || 'AI引擎不可用' }
+  } catch (e) { engine.value = { error: String(e) } }
 }
 
 function ok(v) { return !v || v.error ? 'bad' : 'ok' }
@@ -23,21 +40,35 @@ onUnmounted(() => clearInterval(timer))
   <div class="ops">
     <div class="grid">
       <div class="card">
-        <h2>Java 数据存储层</h2>
+        <h2>Java 主后端 / Readiness</h2>
         <div class="status" :class="ok(java)">
           <span class="dot"></span>
-          {{ java?.error ? '异常' : (java?.status === 'ok' ? '运行中' : '检查中') }}
+          {{ java?.error ? '异常' : (java?.status === 'ready' ? 'Ready' : '检查中') }}
         </div>
         <div class="small" v-if="java && !java.error">
           服务: {{ java.service }}<br/>
+          DB: {{ java.database?.status }} · {{ java.database?.latency_ms ?? '-' }} ms<br/>
           时间: {{ java.time?.replace('T', ' ') }}
         </div>
         <div class="small bad" v-else-if="java?.error">{{ java.error }}</div>
-        <a class="link" href="https://agent.shengxia.me/api/health" target="_blank" rel="noopener">探针: /api/health → Java</a>
+        <a class="link" href="https://agent.shengxia.me/api/health/ready" target="_blank" rel="noopener">探针: /api/health/ready → Java + DB</a>
       </div>
 
       <div class="card">
-        <h2>Python 行情 + AI 层</h2>
+        <h2>PostgreSQL</h2>
+        <div class="status" :class="ok(db)">
+          <span class="dot"></span>
+          {{ db?.error ? '异常' : (db?.status === 'up' ? '可查询' : '检查中') }}
+        </div>
+        <div class="small" v-if="db && !db.error">
+          产品: {{ db.product || '-' }}<br/>
+          SELECT 1: {{ db.latency_ms ?? '-' }} ms
+        </div>
+        <div class="small bad" v-else-if="db?.error">{{ db.error }}</div>
+      </div>
+
+      <div class="card">
+        <h2>Python AI 层</h2>
         <div class="status" :class="ok(py)">
           <span class="dot"></span>
           {{ py?.error ? '异常' : (py?.status === 'ok' ? '运行中' : '检查中') }}
@@ -47,12 +78,21 @@ onUnmounted(() => clearInterval(timer))
           时间: {{ py.time?.replace('T', ' ') }}
         </div>
         <div class="small bad" v-else-if="py?.error">{{ py.error }}</div>
-        <a class="link" href="https://agent.shengxia.me/py/api/health" target="_blank" rel="noopener">探针: /py/api/health → Python</a>
+        <a class="link" href="https://agent.shengxia.me/api/health/ai" target="_blank" rel="noopener">探针: /api/health/ai → Java → Python</a>
       </div>
 
       <div class="card">
         <h2>AI 引擎</h2>
-        <a class="link" href="https://agent.shengxia.me/py/api/ai/capabilities" target="_blank" rel="noopener">探针: AI capabilities</a>
+        <div class="status" :class="ok(engine)">
+          <span class="dot"></span>
+          {{ engine?.error ? '异常' : '已配置' }}
+        </div>
+        <div class="small" v-if="engine && !engine.error">
+          Provider: {{ engine.provider }}<br/>
+          Model: {{ engine.model }}
+        </div>
+        <div class="small bad" v-else-if="engine?.error">{{ engine.error }}</div>
+        <a class="link" href="https://agent.shengxia.me/api/ai/capabilities" target="_blank" rel="noopener">探针: /api/ai/capabilities → Java → Python</a>
       </div>
     </div>
 

@@ -7,18 +7,11 @@ export default defineConfig({
   plugins: [vue()],
   server: {
     port: 5173,
-    // 本地开发代理 (避免跨域)
-    //  - /api      -> Java 主后端 8200 (数据存储)
-    //  - /py       -> Python 辅助微服务 8100 (行情+AI), 去掉 /py 前缀
+    // 浏览器只访问 Java 主后端；Java 再通过内部令牌调用本机 Python AI 服务。
     proxy: {
       '/api': {
         target: 'http://127.0.0.1:8200',
         changeOrigin: true
-      },
-      '/py': {
-        target: 'http://127.0.0.1:8100',
-        changeOrigin: true,
-        rewrite: (p) => p.replace(/^\/py/, '')
       }
     }
   }

@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily JARVIS PostgreSQL backup timer
+
+[Timer]
+OnCalendar=*-*-* 03:20:00
+Persistent=true
+RandomizedDelaySec=10m
+Unit=jarvis-postgres-backup.service
+
+[Install]
+WantedBy=timers.target

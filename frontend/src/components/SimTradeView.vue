@@ -9,6 +9,8 @@ const msg = ref('')
 const msgType = ref('info')
 const realtimePrices = ref(null)
 const jdPrices = ref(null)
+const submitting = ref(false)
+let pendingOrderAttempt = null
 
 const order = reactive({
   symbol: 'sh518850',
@@ -17,37 +19,14 @@ const order = reactive({
   leverage: 1,
 })
 
-// 京东积存金直连 (与行情页一致, 经 nginx /jd/ 同域反代)
-const JD_SOURCES = [
-  { key: 'zheshang', label: '浙商积存金', name: 'gw2/generic/jrm/h5/m/stdLatestPrice', sku: '1961543816' },
-  { key: 'minsheng', label: '民生积存金', name: 'gw/generic/hj/h5/m/latestPrice', sku: 'P005' },
-]
-
-function parseJdRate(raw) {
-  const s = String(raw ?? '0').replace('%', '')
-  const n = parseFloat(s)
-  return Number.isFinite(n) ? n : 0
-}
-
+// 京东积存金由 Java 定时采集并落库，前端只读取统一结构。
 async function loadJdLive() {
-  const out = {}
-  await Promise.all(JD_SOURCES.map(async (src) => {
-    try {
-      const d = await api.jdLive(src.name, src.sku)
-      const datas = d?.resultData?.datas
-      if (!d?.success || !datas) return
-      const price = parseFloat(datas.price)
-      if (!Number.isFinite(price)) return
-      const tsMs = parseInt(datas.time, 10) || 0
-      out[src.key] = {
-        source: src.key, label: src.label, price,
-        change: parseFloat(datas.upAndDownAmt || 0),
-        change_pct: parseJdRate(datas.upAndDownRate),
-        time: tsMs ? new Date(tsMs).toLocaleString('zh-CN', { hour12: false }) : '',
-      }
-    } catch (e) { /* 单源失败不影响另一源 */ }
-  }))
-  if (Object.keys(out).length) jdPrices.value = out
+  try {
+    const d = await api.jdPrices()
+    if (d.code === 200 && d.data && Object.keys(d.data).length) {
+      jdPrices.value = d.data
+    }
+  } catch (e) { /* 保留上一次有效值 */ }
 }
 
 async function load() {
@@ -73,9 +52,31 @@ async function loadRealtime() {
 }
 
 async function submitOrder() {
+  if (submitting.value) return
   msg.value = ''
+  submitting.value = true
+
+  const current = {
+    type: order.type,
+    symbol: order.symbol,
+    quantity: Number(order.quantity),
+    leverage: Number(order.leverage),
+  }
+  const samePending = pendingOrderAttempt
+    && pendingOrderAttempt.type === current.type
+    && pendingOrderAttempt.symbol === current.symbol
+    && pendingOrderAttempt.quantity === current.quantity
+    && pendingOrderAttempt.leverage === current.leverage
+  if (!samePending) {
+    pendingOrderAttempt = { ...current, id: crypto.randomUUID() }
+  }
+
   try {
-    const res = await api.simOrder(order.type, order.symbol, Number(order.quantity), Number(order.leverage))
+    const res = await api.simOrder(
+      current.type, current.symbol, current.quantity, current.leverage, pendingOrderAttempt.id,
+    )
+    // 收到明确 HTTP 响应后，本次逻辑订单已结束；只有网络异常才保留幂等号供重试。
+    pendingOrderAttempt = null
     if (res.code === 200) {
       const d = res.data
       let extra = ''
@@ -88,8 +89,11 @@ async function submitOrder() {
       msgType.value = 'error'
     }
   } catch (e) {
+    // 网络异常时保留 pendingOrderAttempt；用户重试相同订单会复用同一 clientOrderId。
     msg.value = '下单失败: ' + e
     msgType.value = 'error'
+  } finally {
+    submitting.value = false
   }
 }
 
@@ -100,6 +104,12 @@ function fmtPct(n) {
   return n == null ? '-' : Number(n).toFixed(2) + '%'
 }
 function posClass(n) { return n >= 0 ? 'pos' : 'neg' }
+function riskValueClass(n) { return n < 15 ? 'neg' : (n < 25 ? 'warn' : '') }
+function tradeLabel(type) {
+  if (type === 'BUY') return '买入'
+  if (type === 'FORCE_SELL') return '强平'
+  return '卖出'
+}
 
 async function quickSell(symbol, qty) {
   if (!confirm('确认卖出全部 ' + qty + ' 股(' + symbol + ')?')) return
@@ -180,7 +190,7 @@ onMounted(() => { load(); loadJdLive() })
         <div class="card-title">维持保证金率
           <span class="risk-badge" :class="'rk-' + String(account.riskStatus).toLowerCase()">{{ account.riskStatus }}</span>
         </div>
-        <div class="card-value" :class="account.maintMarginPct < 50 ? 'neg' : ''">{{ fmtPct(account.maintMarginPct) }}</div>
+        <div class="card-value" :class="riskValueClass(account.maintMarginPct)">{{ fmtPct(account.maintMarginPct) }}</div>
       </div>
     </div>
 
@@ -207,7 +217,9 @@ onMounted(() => { load(); loadJdLive() })
                     @click="order.leverage = l">{{ l }}x</button>
           </div>
         </div>
-        <button class="btn primary" @click="submitOrder">提交 {{ order.type === 'BUY' ? '买入' : '卖出' }}</button>
+        <button class="btn primary" @click="submitOrder" :disabled="submitting">
+          {{ submitting ? '提交中…' : `提交 ${order.type === 'BUY' ? '买入' : '卖出'}` }}
+        </button>
       </div>
       <div v-if="msg" class="msg" :class="msgType">{{ msg }}</div>
       <div v-if="order.type === 'BUY' && order.leverage > 1" class="lev-tip">
@@ -225,7 +237,10 @@ onMounted(() => { load(); loadJdLive() })
             <td>{{ sym }}</td>
             <td>{{ p.quantity }}</td>
             <td>{{ p.avgCost }}</td>
-            <td>{{ p.currentPrice }}</td>
+            <td>
+              {{ p.currentPrice }}
+              <span v-if="p.stale" class="stale-tag" :title="`最后行情：${p.quoteTime || '-'}`">行情过期</span>
+            </td>
             <td>{{ fmt(p.marketValue) }}</td>
             <td><span v-if="p.leverage > 1" class="lev-chip">{{ p.leverage }}x</span><span v-else>1x</span></td>
             <td :class="p.loan > 0 ? 'warn' : ''">{{ p.loan > 0 ? fmt(p.loan) : '-' }}</td>
@@ -249,7 +264,7 @@ onMounted(() => { load(); loadJdLive() })
           <tr v-for="t in trades" :key="t.id">
             <td>{{ t.createdAt?.replace('T', ' ').slice(0, 19) }}</td>
             <td>{{ t.symbol }}</td>
-            <td :class="t.type === 'BUY' ? 'pos' : 'neg'">{{ t.type === 'BUY' ? '买入' : '卖出' }}</td>
+            <td :class="t.type === 'BUY' ? 'pos' : 'neg'">{{ tradeLabel(t.type) }}</td>
             <td>{{ t.leverage > 1 ? t.leverage + 'x' : '-' }}</td>
             <td>{{ t.price }}</td>
             <td>{{ t.quantity }}</td>
@@ -295,6 +310,7 @@ onMounted(() => { load(); loadJdLive() })
 .rk-safe { background: rgba(39,196,107,.15); color: #27c46b; }
 .rk-warn { background: rgba(241,196,15,.15); color: #f1c40f; }
 .rk-danger { background: rgba(239,83,80,.2); color: #ef5350; }
+.stale-tag { display: inline-block; margin-left: 6px; padding: 1px 5px; border-radius: 4px; background: rgba(241,196,15,.14); color: #f1c40f; font-size: 10px; vertical-align: 1px; }
 .btn.small { padding: 4px 10px; font-size: 12px; }
 .warn { color: #f1c40f; }
 .btn.buy { background: rgba(39,196,107,.15); color: #27c46b; border-color: #27c46b; }

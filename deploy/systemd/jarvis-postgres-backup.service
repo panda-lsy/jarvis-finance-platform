@@ -1,0 +1,25 @@
+[Unit]
+Description=JARVIS PostgreSQL verified backup
+After=postgresql.service
+
+[Service]
+Type=oneshot
+User=jarvis
+Group=jarvis
+EnvironmentFile=/etc/jarvis/java.env
+Environment=BACKUP_DIR=/var/backups/jarvis/postgres
+ExecStart=/usr/local/sbin/jarvis-postgres-backup
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/backups/jarvis/postgres
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

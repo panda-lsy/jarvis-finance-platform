@@ -1,6 +1,9 @@
-# Windows PowerShell Scripts
+# Legacy / Local Development Scripts
 
-This folder provides Windows-first scripts so daily operations do not depend on shell scripts.
+> 这些脚本属于旧版本地开发栈，会启动 dashboard / websocket / 旧 Python API 等历史组件。
+> **生产环境不要使用本目录脚本。** 当前生产架构只运行 Java 主后端 + Python AI 服务，统一使用 `deploy/` 下的 systemd / release 脚本。
+
+This folder is retained only for legacy/local workflows.
 
 ## Core Flow
 

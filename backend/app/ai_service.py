@@ -1,27 +1,36 @@
 #!/usr/bin/env python3
 """
-贾维斯 AI 服务 (Python 直连 DeepSeek)
-- 职责: AI 对话 / 智能报价 / 财报解析 / 研报情感 / 产业链分析
-- 协议: OpenAI Chat Completions (deepseek-chat)
-- API Key: 环境变量 DEEPSEEK_API_KEY
-- endpoint: https://api.deepseek.com/v1/chat/completions
+JARVIS AI provider adapter.
 
-架构: 按项目约定, AI 接口统一归 Python 侧负责 (Java 专注数据存储)。
-前端只面对本服务, 通过 /api/ai/* 调用。
+Python 只负责 AI 调用；浏览器不直连本服务，所有请求由 Java 主后端通过内部令牌转发。
+上游采用 OpenAI Chat Completions 兼容协议，可配置 DeepSeek、Ollama Cloud 或其他兼容服务。
 """
 import os
 import json
 import logging
-from typing import List, Dict, Optional, Any
+from typing import Iterator, List, Dict, Optional, Any
 
 import requests
 
 logger = logging.getLogger(__name__)
 
-DEEPSEEK_BASE = os.getenv("DEEPSEEK_BASE_URL", "https://ollama.com/v1")
-DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash:0731")
-API_KEY = os.getenv("DEEPSEEK_API_KEY", os.getenv("OLLAMA_API_KEY", ""))
-TIMEOUT = int(os.getenv("DEEPSEEK_TIMEOUT", "60"))
+AI_BASE_URL = os.getenv(
+    "AI_BASE_URL",
+    os.getenv("DEEPSEEK_BASE_URL", "https://ollama.com/v1"),
+).rstrip("/")
+AI_MODEL = os.getenv(
+    "AI_MODEL",
+    os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash:0731"),
+)
+AI_API_KEY = os.getenv(
+    "AI_API_KEY",
+    os.getenv("DEEPSEEK_API_KEY", os.getenv("OLLAMA_API_KEY", "")),
+)
+AI_PROVIDER = os.getenv(
+    "AI_PROVIDER",
+    "ollama-cloud" if "ollama.com" in AI_BASE_URL else "deepseek",
+)
+AI_TIMEOUT = int(os.getenv("AI_TIMEOUT", os.getenv("DEEPSEEK_TIMEOUT", "60")))
 
 # 系统提示词 - 金融投研助手
 FIN_SYS_PROMPT = (
@@ -33,18 +42,16 @@ FIN_SYS_PROMPT = (
 
 def _key() -> str:
     """校验 API Key, 缺失时抛出明确异常"""
-    if not API_KEY:
-        raise RuntimeError(
-            "DEEPSEEK_API_KEY 未配置: 请在环境变量中设置 DEEPSEEK_API_KEY"
-        )
-    return API_KEY
+    if not AI_API_KEY:
+        raise RuntimeError("AI_API_KEY 未配置")
+    return AI_API_KEY
 
 
 def _chat_request(messages: List[Dict[str, str]], temperature: float = 0.7,
                   max_tokens: Optional[int] = None) -> Dict[str, Any]:
-    """调用 DeepSeek Chat Completions"""
+    """调用 OpenAI Chat Completions 兼容上游。"""
     payload: Dict[str, Any] = {
-        "model": DEEPSEEK_MODEL,
+        "model": AI_MODEL,
         "messages": messages,
         "temperature": temperature,
         "stream": False,
@@ -52,30 +59,110 @@ def _chat_request(messages: List[Dict[str, str]], temperature: float = 0.7,
     if max_tokens:
         payload["max_tokens"] = max_tokens
 
-    resp = requests.post(
-        f"{DEEPSEEK_BASE}/chat/completions",
-        headers={
-            "Authorization": f"Bearer {_key()}",
-            "Content-Type": "application/json",
-        },
-        json=payload,
-        timeout=TIMEOUT,
-    )
+    try:
+        resp = requests.post(
+            f"{AI_BASE_URL}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {_key()}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+            timeout=AI_TIMEOUT,
+        )
+    except requests.RequestException as e:
+        logger.error("AI upstream connection failed: %s", e)
+        raise RuntimeError("AI 上游连接失败") from e
     if resp.status_code != 200:
-        logger.error("DeepSeek HTTP %s: %s", resp.status_code, resp.text[:500])
-        raise RuntimeError(f"DeepSeek 调用失败 (HTTP {resp.status_code}): {resp.text[:200]}")
+        logger.error("AI upstream HTTP %s: %s", resp.status_code, resp.text[:500])
+        raise RuntimeError(f"AI 上游调用失败 (HTTP {resp.status_code})")
 
     data = resp.json()
     try:
         return {
             "content": data["choices"][0]["message"]["content"],
             "role": data["choices"][0]["message"].get("role", "assistant"),
-            "model": data.get("model", DEEPSEEK_MODEL),
+            "model": data.get("model", AI_MODEL),
             "usage": data.get("usage"),
         }
     except (KeyError, IndexError) as e:
-        logger.error("DeepSeek 响应解析失败: %s", data)
-        raise RuntimeError(f"DeepSeek 响应格式异常: {e}")
+        logger.error("AI 上游响应解析失败: %s", data)
+        raise RuntimeError(f"AI 上游响应格式异常: {e}")
+
+
+def open_chat_stream(messages: List[Dict[str, str]], temperature: float = 0.7) -> Iterator[Dict[str, Any]]:
+    """打开 OpenAI-compatible 流式对话并返回增量事件迭代器。
+
+    上游连接和 HTTP 状态会在本函数返回前完成校验，因此 FastAPI 可以在开始
+    SSE 响应之前把连接/鉴权等错误映射为 502，而不是先返回 200 再失败。
+    """
+    full = [{"role": "system", "content": FIN_SYS_PROMPT}] + messages
+    payload: Dict[str, Any] = {
+        "model": AI_MODEL,
+        "messages": full,
+        "temperature": temperature,
+        "stream": True,
+    }
+    try:
+        resp = requests.post(
+            f"{AI_BASE_URL}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {_key()}",
+                "Content-Type": "application/json",
+                "Accept": "text/event-stream",
+            },
+            json=payload,
+            timeout=(10, AI_TIMEOUT),
+            stream=True,
+        )
+    except requests.RequestException as e:
+        raise RuntimeError(f"AI 上游连接失败: {e}") from e
+
+    if resp.status_code != 200:
+        body = resp.text[:500]
+        resp.close()
+        logger.error("AI upstream streaming HTTP %s: %s", resp.status_code, body)
+        raise RuntimeError(f"AI 上游调用失败 (HTTP {resp.status_code})")
+    if not getattr(resp, "encoding", None):
+        resp.encoding = "utf-8"
+
+    def events() -> Iterator[Dict[str, Any]]:
+        model = AI_MODEL
+        try:
+            for raw_line in resp.iter_lines(decode_unicode=True):
+                if not raw_line:
+                    continue
+                line = raw_line.strip()
+                if not line.startswith("data:"):
+                    continue
+                payload_text = line[5:].strip()
+                if payload_text == "[DONE]":
+                    yield {"type": "done", "model": model}
+                    return
+                try:
+                    chunk = json.loads(payload_text)
+                except json.JSONDecodeError:
+                    logger.warning("忽略无法解析的 AI SSE 行: %s", payload_text[:200])
+                    continue
+                model = chunk.get("model") or model
+                choices = chunk.get("choices") or []
+                if not choices:
+                    continue
+                delta = choices[0].get("delta") or {}
+                content = delta.get("content")
+                if content:
+                    yield {"type": "delta", "content": content}
+                finish_reason = choices[0].get("finish_reason")
+                if finish_reason:
+                    yield {"type": "done", "model": model, "finish_reason": finish_reason}
+                    return
+            yield {"type": "done", "model": model}
+        except requests.RequestException as e:
+            logger.error("AI upstream streaming interrupted: %s", e)
+            yield {"type": "error", "message": "AI 上游流式连接中断"}
+        finally:
+            resp.close()
+
+    return events()
 
 
 def chat(messages: List[Dict[str, str]], temperature: float = 0.7) -> Dict[str, Any]:
@@ -86,14 +173,15 @@ def chat(messages: List[Dict[str, str]], temperature: float = 0.7) -> Dict[str, 
 
 def capabilities() -> Dict[str, Any]:
     """能力探测: 是否可用 + 协议/模型信息"""
-    ok = bool(API_KEY)
+    ok = bool(AI_API_KEY)
     return {
         "available": ok,
-        "provider": "deepseek",
+        "provider": AI_PROVIDER,
         "protocol": "openai-chat",
-        "model": DEEPSEEK_MODEL,
+        "streaming": True,
+        "model": AI_MODEL,
         "key_configured": ok,
-        "message": "已配置" if ok else "缺少 DEEPSEEK_API_KEY 环境变量",
+        "message": "已配置" if ok else "缺少 AI_API_KEY 环境变量",
         "skills": [
             "金价实时解读",
             "黄金ETF投资咨询",

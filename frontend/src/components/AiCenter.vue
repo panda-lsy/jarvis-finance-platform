@@ -1,5 +1,5 @@
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, onMounted, nextTick } from 'vue'
 import { api } from '../api/client'
 
 // ---- 对话 ----
@@ -7,6 +7,8 @@ const messages = ref([])
 const input = ref('')
 const sending = ref(false)
 const aiStatus = ref(null)
+const chatBox = ref(null)
+let currentChatAbort = null
 
 // ---- 智能报价 ----
 const quoteData = ref(null)
@@ -40,20 +42,50 @@ function push(role, content) {
   messages.value.push({ role, content })
 }
 
+async function scrollChatToBottom() {
+  await nextTick()
+  if (chatBox.value) chatBox.value.scrollTop = chatBox.value.scrollHeight
+}
+
+function stopChat() {
+  currentChatAbort?.abort()
+}
+
 async function sendChat() {
   const text = input.value.trim()
   if (!text || sending.value) return
   push('user', text)
   input.value = ''
+  // 不把前端欢迎语发给模型；保留最近 20 条真实 user/assistant 上下文。
+  const history = messages.value.slice(1).slice(-20).map(({ role, content }) => ({ role, content }))
+  push('assistant', '')
+  const assistantIndex = messages.value.length - 1
   sending.value = true
+  currentChatAbort = new AbortController()
+  await scrollChatToBottom()
   try {
-    const d = await api.aiChat([{ role: 'user', content: text }])
-    const content = d.data?.content || d.message || '（无回复）'
-    push('assistant', content)
+    await api.aiChatStream(history, ({ event, data }) => {
+      if (event === 'delta' && data?.content) {
+        messages.value[assistantIndex].content += data.content
+        scrollChatToBottom()
+      } else if (event === 'error') {
+        throw new Error(data?.message || 'AI 流式响应中断')
+      }
+    }, currentChatAbort.signal)
+    if (!messages.value[assistantIndex].content) {
+      messages.value[assistantIndex].content = '（无回复）'
+    }
   } catch (e) {
-    push('assistant', '⚠️ ' + e)
+    if (e?.name === 'AbortError') {
+      if (!messages.value[assistantIndex].content) messages.value[assistantIndex].content = '（已停止）'
+    } else {
+      const prefix = messages.value[assistantIndex].content ? '\n\n' : ''
+      messages.value[assistantIndex].content += `${prefix}⚠️ ${e?.message || e}`
+    }
   } finally {
+    currentChatAbort = null
     sending.value = false
+    scrollChatToBottom()
   }
 }
 
@@ -67,8 +99,7 @@ async function runQuote() {
     const rt = q.data?.gold_etf
     if (!rt) { quoteResult.value = '未获取到行情' ; return }
     quoteData.value = rt
-    const d = await api.aiChat([{ role: 'user', content:
-      `基于以下实时行情做智能报价解读：现价${rt.price}，昨收${rt.prev_close}，涨跌${rt.change} (${rt.change_pct}%)。给出3-5条要点，200字内。` }])
+    const d = await api.aiQuote(rt)
     quoteResult.value = d.data?.content || '（无回复）'
   } catch (e) { quoteResult.value = '⚠️ ' + e }
   finally { quoteLoading.value = false }
@@ -79,8 +110,7 @@ async function runReport() {
   if (!reportText.value.trim()) return
   reportLoading.value = true; reportResult.value = ''
   try {
-    const d = await api.aiChat([{ role: 'user', content:
-      '请作为金融分析师解析以下财报，输出结构化分析（营收利润/毛利率/资产负债/风险/建议）：\n\n' + reportText.value }])
+    const d = await api.aiFinancialReport(reportText.value.trim())
     reportResult.value = d.data?.content || '（无回复）'
   } catch (e) { reportResult.value = '⚠️ ' + e }
   finally { reportLoading.value = false }
@@ -90,8 +120,7 @@ async function runReport() {
 async function runChain() {
   chainLoading.value = true; chainResult.value = ''
   try {
-    const d = await api.aiChat([{ role: 'user', content:
-      `请对【${chainNode.value}】进行产业链分析：上下游、供需、关键厂商、景气度、投资逻辑。` }])
+    const d = await api.aiChain(chainNode.value.trim())
     chainResult.value = d.data?.content || '（无回复）'
   } catch (e) { chainResult.value = '⚠️ ' + e }
   finally { chainLoading.value = false }
@@ -127,7 +156,7 @@ onMounted(() => {
         </div>
         <div class="chat-input">
           <input v-model="input" @keyup.enter="sendChat" placeholder="问金价、投资建议、财报…" :disabled="sending" />
-          <button class="btn primary" @click="sendChat" :disabled="sending">{{ sending ? '思考中…' : '发送' }}</button>
+          <button class="btn primary" @click="sending ? stopChat() : sendChat()">{{ sending ? '停止生成' : '发送' }}</button>
         </div>
       </div>
 

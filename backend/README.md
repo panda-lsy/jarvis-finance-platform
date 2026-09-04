@@ -1,28 +1,27 @@
-# JARVIS 黄金 - 本机后端 (Python FastAPI)
+# JARVIS AI Service (Python FastAPI)
 
-本机持久化黄金价格数据，提供历史K线、实时价与回测 API。
-数据源：腾讯财经（已验证可用）。
+`backend/` 现在是 **内部 AI 服务**，不再承担行情、SQLite、K 线、回测或模拟交易业务。
 
-## 功能
+## 架构边界
 
-- **历史K线抓取**：首次启动批量拉取约120个交易日日K → 落 SQLite
-- **实时价格记录**：周期抓取实时价并追加快照
-- **回测引擎**：双均线策略，返回收益/回撤/逐日净值曲线
-- **REST API**：供 GitHub Pages 前端 / React Native 移动端跨域访问
-
-## 目录
-
+```text
+Browser / Mobile
+      |
+      v
+Java Spring Boot :8200
+      |
+      | X-Internal-Service-Token
+      v
+Python FastAPI :8100
+      |
+      v
+OpenAI Chat Completions compatible provider
 ```
-backend/
-├── app/
-│   ├── main.py           # FastAPI 入口 (端口 8100)
-│   ├── price_source.py   # 腾讯数据抓取
-│   ├── db.py             # SQLite 持久化
-│   ├── scheduler.py      # 批量加载 + 周期抓取
-│   └── backtest.py       # 双均线回测引擎
-├── data/gold.db          # SQLite 数据库 (运行时生成)
-└── requirements.txt
-```
+
+- 浏览器和移动端不得直接调用 Python。
+- Python 默认只监听 `127.0.0.1:8100`。
+- 所有 `/api/ai/**`、`/api/health`、`/api/ready` 都要求 `PYTHON_SERVICE_TOKEN`。
+- 用户、行情、K 线、回测、交易与数据库统一归 Java。
 
 ## 启动
 
@@ -30,27 +29,41 @@ backend/
 cd backend
 pip install -r requirements.txt
 
-# 方式1: 仅执行一次 (拉历史 + 记快照)
-python -m app.scheduler once
+export PYTHON_SERVICE_TOKEN='<与 Java 完全一致的随机令牌>'
+export AI_API_KEY='<上游 AI Key>'
+# 可选
+export AI_PROVIDER='ollama-cloud'
+export AI_BASE_URL='https://ollama.com/v1'
+export AI_MODEL='deepseek-v4-flash:0731'
+export AI_TIMEOUT='60'
 
-# 方式2: 常驻周期抓取 (仅抓取, 不启服务)
-python -m app.scheduler server
-
-# 方式3: 启动 API 服务 (自动后台周期抓取)
-python -m uvicorn app.main:app --host 0.0.0.0 --port 8100
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8100
 ```
+
+旧变量 `DEEPSEEK_API_KEY`、`DEEPSEEK_BASE_URL`、`DEEPSEEK_MODEL`、`OLLAMA_API_KEY` 仍兼容，但新部署统一使用 `AI_*`。
 
 ## API
 
 | 方法 | 路径 | 说明 |
-|------|------|------|
-| GET | `/api/health` | 健康检查 |
-| GET | `/api/markets` | 可用的黄金标的 |
-| GET | `/api/prices` | 各标的最新实时价 + 最近快照 |
-| GET | `/api/kline?market=gold_etf&limit=120` | 本机持久化的历史K线 |
-| GET | `/api/backtest?short_ma=5&long_ma=20` | 双均线回测 |
-| GET | `/api/storage` | SQLite 存储概览 |
+|---|---|---|
+| GET | `/api/health` | 内部 liveness |
+| GET | `/api/ready` | AI Provider/API Key readiness |
+| GET | `/api/ai/capabilities` | AI 能力/供应商/模型状态 |
+| POST | `/api/ai/chat` | 多轮对话（兼容非流式） |
+| POST | `/api/ai/chat/stream` | SSE 流式多轮对话 |
+| POST | `/api/ai/financial/report` | 财报文本分析 |
+| POST | `/api/ai/analyze/sentiment` | 研报情感分析 |
+| POST | `/api/ai/analyze/chain` | 产业链分析 |
+| POST | `/api/ai/quote` | 行情智能解读 |
 
-## 环境变量
+所有请求必须带：
 
-- `GOLD_DB_PATH`：自定义 SQLite 路径（默认 `data/gold.db`）
+```text
+X-Internal-Service-Token: <PYTHON_SERVICE_TOKEN>
+```
+
+## 测试
+
+```bash
+python -m pytest -q tests
+```
