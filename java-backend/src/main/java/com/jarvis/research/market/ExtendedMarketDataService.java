@@ -54,6 +54,47 @@ public class ExtendedMarketDataService {
     private final WebClient webClient;
     private final ObjectMapper objectMapper;
 
+    /**
+     * 断网缓存兜底：记录每个请求最近一次成功结果。
+     * 上游不可用时回退最近缓存并标记 stale=true，缓存有效期 24 小时。
+     */
+    record CacheKey(String kind, String market, String symbol, String interval, int limit) {}
+
+    private record CachedPayload(Map<String, Object> data, LocalDateTime cachedAt) {}
+
+    private static final java.time.Duration CACHE_TTL = java.time.Duration.ofHours(24);
+
+    private final java.util.concurrent.ConcurrentHashMap<CacheKey, CachedPayload> responseCache =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    Map<String, Object> fetchWithOfflineFallback(CacheKey key, ThrowingFetch fetch) {
+        try {
+            Map<String, Object> fresh = fetch.get();
+            responseCache.put(key, new CachedPayload(new LinkedHashMap<>(fresh), LocalDateTime.now()));
+            return fresh;
+        } catch (ResponseStatusException e) {
+            throw e;
+        } catch (Exception e) {
+            CachedPayload cached = responseCache.get(key);
+            if (cached != null && cached.cachedAt().isAfter(LocalDateTime.now().minus(CACHE_TTL))) {
+                log.warn("行情源不可用，返回断网缓存 kind={}, market={}, symbol={}, cachedAt={}",
+                        key.kind(), key.market(), key.symbol(), cached.cachedAt());
+                Map<String, Object> out = new LinkedHashMap<>(cached.data());
+                out.put("stale", true);
+                out.put("cached_at", cached.cachedAt().toString());
+                return out;
+            }
+            throw e instanceof RuntimeException re ? re
+                    : new IllegalStateException("行情抓取失败: " + e.getMessage(), e);
+        }
+    }
+
+    /** 允许抛出受检异常的抓取动作（上游源方法普遍声明 throws Exception）。 */
+    @FunctionalInterface
+    interface ThrowingFetch {
+        Map<String, Object> get() throws Exception;
+    }
+
     private final List<Instrument> instruments = List.of(
             new Instrument("a_share", "sh600519", "贵州茅台", "CNY", "Tencent"),
             new Instrument("a_share", "sz000001", "平安银行", "CNY", "Tencent"),
@@ -129,12 +170,14 @@ public class ExtendedMarketDataService {
     public Map<String, Object> quote(String market, String symbol) {
         Instrument instrument = requireInstrument(market, symbol);
         try {
-            return switch (instrument.market()) {
-                case "a_share" -> quoteTencent(instrument);
-                case "us_stock" -> quoteYahoo(instrument);
-                case "crypto" -> quoteCryptoWithFallback(instrument);
-                default -> throw invalid("不支持的市场: " + instrument.market());
-            };
+            return fetchWithOfflineFallback(
+                    new CacheKey("quote", instrument.market(), instrument.symbol(), "", 0),
+                    () -> switch (instrument.market()) {
+                        case "a_share" -> quoteTencent(instrument);
+                        case "us_stock" -> quoteYahoo(instrument);
+                        case "crypto" -> quoteCryptoWithFallback(instrument);
+                        default -> throw invalid("不支持的市场: " + instrument.market());
+                    });
         } catch (ResponseStatusException e) {
             throw e;
         } catch (Exception e) {
@@ -150,35 +193,41 @@ public class ExtendedMarketDataService {
         }
         String normalized = normalizeInterval(interval);
         try {
-            List<Map<String, Object>> data = switch (instrument.market()) {
-                case "a_share" -> "1d".equals(normalized)
-                        ? klineTencent(instrument, limit)
-                        : klineTencentIntraday(instrument, normalized, limit);
-                case "us_stock" -> klineYahoo(instrument, normalized, limit);
-                case "crypto" -> klineCryptoWithFallback(instrument, normalized, limit);
-                default -> throw invalid("不支持的市场: " + instrument.market());
-            };
-            Map<String, Object> technicalAnalysis = enrichTechnicalIndicators(data);
-            Map<String, Object> out = new LinkedHashMap<>();
-            out.put("market", instrument.market());
-            out.put("symbol", instrument.symbol());
-            out.put("interval", normalized);
-            out.put("count", data.size());
-            out.put("data", data);
-            out.put("analysis", technicalAnalysis);
-            if (!data.isEmpty()) {
-                out.put("range", Map.of(
-                        "start", data.get(0).get("date"),
-                        "end", data.get(data.size() - 1).get("date"),
-                        "count", data.size()));
-            }
-            return out;
+            return fetchWithOfflineFallback(
+                    new CacheKey("kline", instrument.market(), instrument.symbol(), normalized, limit),
+                    () -> buildKline(instrument, normalized, limit));
         } catch (ResponseStatusException e) {
             throw e;
         } catch (Exception e) {
             log.warn("扩展K线源调用失败 market={}, symbol={}, message={}", market, symbol, e.getMessage());
             throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "K线源暂不可用，请稍后重试");
         }
+    }
+
+    private Map<String, Object> buildKline(Instrument instrument, String normalized, int limit) throws Exception {
+        List<Map<String, Object>> data = switch (instrument.market()) {
+            case "a_share" -> "1d".equals(normalized)
+                    ? klineTencent(instrument, limit)
+                    : klineTencentIntraday(instrument, normalized, limit);
+            case "us_stock" -> klineYahoo(instrument, normalized, limit);
+            case "crypto" -> klineCryptoWithFallback(instrument, normalized, limit);
+            default -> throw invalid("不支持的市场: " + instrument.market());
+        };
+        Map<String, Object> technicalAnalysis = enrichTechnicalIndicators(data);
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("market", instrument.market());
+        out.put("symbol", instrument.symbol());
+        out.put("interval", normalized);
+        out.put("count", data.size());
+        out.put("data", data);
+        out.put("analysis", technicalAnalysis);
+        if (!data.isEmpty()) {
+            out.put("range", Map.of(
+                    "start", data.get(0).get("date"),
+                    "end", data.get(data.size() - 1).get("date"),
+                    "count", data.size()));
+        }
+        return out;
     }
 
     private Map<String, Object> quoteTencent(Instrument instrument) {

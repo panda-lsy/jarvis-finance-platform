@@ -7,6 +7,7 @@ import org.springframework.web.server.ResponseStatusException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -81,5 +82,30 @@ class ExtendedMarketDataServiceTest {
         assertNotNull(summary.get("indicators"));
         assertNotNull(summary.get("support_20"));
         assertNotNull(summary.get("resistance_20"));
+    }
+
+    @Test
+    void offlineFallbackServesCachedResultWithStaleFlag() {
+        var service = new ExtendedMarketDataService(new ObjectMapper());
+        var key = new ExtendedMarketDataService.CacheKey("quote", "a_share", "sh600519", "", 0);
+        Map<String, Object> fresh = new LinkedHashMap<>();
+        fresh.put("price", 1316.01);
+
+        assertEquals(1316.01, service.fetchWithOfflineFallback(key, () -> fresh).get("price"));
+
+        // 上游断网后回退最近成功缓存，并带 stale 标记
+        Map<String, Object> fallback = service.fetchWithOfflineFallback(key,
+                () -> { throw new RuntimeException("connection refused"); });
+        assertEquals(Boolean.TRUE, fallback.get("stale"));
+        assertNotNull(fallback.get("cached_at"));
+        assertEquals(1316.01, fallback.get("price"));
+    }
+
+    @Test
+    void offlineFallbackWithoutCacheStillThrows() {
+        var service = new ExtendedMarketDataService(new ObjectMapper());
+        var key = new ExtendedMarketDataService.CacheKey("kline", "us_stock", "AAPL", "1d", 120);
+        assertThrows(RuntimeException.class, () -> service.fetchWithOfflineFallback(key,
+                () -> { throw new RuntimeException("connection refused"); }));
     }
 }
