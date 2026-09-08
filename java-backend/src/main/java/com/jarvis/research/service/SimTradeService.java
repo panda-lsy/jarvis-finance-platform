@@ -1,6 +1,7 @@
 package com.jarvis.research.service;
 
 import com.jarvis.research.audit.AuditService;
+import com.jarvis.research.market.KlineDailyRepository;
 import com.jarvis.research.market.PriceSnapshotRepository;
 import com.jarvis.research.user.*;
 import lombok.RequiredArgsConstructor;
@@ -13,6 +14,7 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -32,11 +34,16 @@ public class SimTradeService {
     private static final int RATIO_SCALE = 12;
     private static final BigDecimal INITIAL_CASH = new BigDecimal("100000.0000");
     private static final BigDecimal MIN_POSITION_QTY = new BigDecimal("0.00000001");
+    /** 价格来源：实时快照 */
+    static final String SOURCE_REALTIME = "realtime";
+    /** 价格来源：最近日K收盘价（非交易时段兜底） */
+    static final String SOURCE_DAILY_CLOSE = "daily_close";
 
     private final SimAccountRepository accountRepository;
     private final SimPositionRepository positionRepository;
     private final SimTradeRepository tradeRepository;
     private final PriceSnapshotRepository priceSnapshotRepository;
+    private final KlineDailyRepository klineDailyRepository;
     private final AuditService auditService;
 
     /** 获取或创建用户模拟账户。 */
@@ -135,6 +142,10 @@ public class SimTradeService {
         if ("BUY".equals(typeUp)) {
             out.put("margin", margin);
             out.put("loan", loan);
+        }
+        if (SOURCE_DAILY_CLOSE.equals(executionQuote.source())) {
+            out.put("priceSource", SOURCE_DAILY_CLOSE);
+            out.put("message", out.get("message") + " [日K收盘价，非实时]");
         }
         return out;
     }
@@ -241,6 +252,7 @@ public class SimTradeService {
             detail.put("currentPrice", currentPrice);
             detail.put("quoteTime", quote.ts());
             detail.put("stale", quote.stale());
+            detail.put("priceSource", quote.source());
             detail.put("marketValue", mv);
             detail.put("leverage", pos.getLeverage() == null ? BigDecimal.ONE : pos.getLeverage());
             detail.put("loan", posLoan);
@@ -329,28 +341,45 @@ public class SimTradeService {
                     "无法获取 " + symbol + " 的有效行情");
         }
 
-        var snapshot = priceSnapshotRepository.findTopByMarketOrderByTsDesc(market)
+        var snapshotOpt = priceSnapshotRepository.findTopByMarketOrderByTsDesc(market);
+        if (snapshotOpt.isPresent()) {
+            var snapshot = snapshotOpt.get();
+            BigDecimal price = asDecimal(snapshot.getPrice());
+            long maxAgeSeconds = market.startsWith("jd_") ? 180L : 120L;
+            LocalDateTime now = LocalDateTime.now();
+            boolean stale = snapshot.getTs() == null
+                    || snapshot.getTs().isBefore(now.minusSeconds(maxAgeSeconds));
+            if (price != null && price.signum() > 0 && (!requireFresh || !stale)) {
+                return new QuoteValue(value(price), snapshot.getTs(), stale, SOURCE_REALTIME);
+            }
+        }
+
+        // 兜底：无实时快照或快照已过期（典型场景：A股非交易时段）时，
+        // 回退最近一根日K收盘价成交，stale=true 明确标记非实时。
+        // 强平风控（SimRiskService）不使用兜底价，维持缺实时行情即跳过强平的保守策略。
+        return klineDailyRepository.findTopByMarketOrderByDateDesc(market).stream()
+                .filter(k -> {
+                    BigDecimal close = asDecimal(k.getClose());
+                    return close != null && close.signum() > 0;
+                })
+                .findFirst()
+                .map(k -> new QuoteValue(value(asDecimal(k.getClose())),
+                        klineTime(k.getDate()), true, SOURCE_DAILY_CLOSE))
                 .orElseThrow(() -> new ResponseStatusException(
                         HttpStatus.SERVICE_UNAVAILABLE,
                         "无法获取 " + symbol + " 的有效行情"));
-        BigDecimal price = asDecimal(snapshot.getPrice());
-        if (price == null || price.signum() <= 0) {
-            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
-                    "无法获取 " + symbol + " 的有效行情");
-        }
-
-        long maxAgeSeconds = market.startsWith("jd_") ? 180L : 120L;
-        LocalDateTime now = LocalDateTime.now();
-        boolean stale = snapshot.getTs() == null
-                || snapshot.getTs().isBefore(now.minusSeconds(maxAgeSeconds));
-        if (requireFresh && stale) {
-            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
-                    "行情已过期，暂停成交: " + symbol);
-        }
-        return new QuoteValue(value(price), snapshot.getTs(), stale);
     }
 
-    private record QuoteValue(BigDecimal price, LocalDateTime ts, boolean stale) {}
+    /** 日K日期字符串（yyyy-MM-dd）转时间戳，解析失败返回 null。 */
+    private LocalDateTime klineTime(String date) {
+        try {
+            return LocalDate.parse(date).atStartOfDay();
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private record QuoteValue(BigDecimal price, LocalDateTime ts, boolean stale, String source) {}
 
     private String normalizeOrderKey(String clientOrderId) {
         if (clientOrderId == null) return null;

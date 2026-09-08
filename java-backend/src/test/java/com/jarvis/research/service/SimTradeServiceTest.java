@@ -1,6 +1,8 @@
 package com.jarvis.research.service;
 
 import com.jarvis.research.audit.AuditService;
+import com.jarvis.research.market.KlineDaily;
+import com.jarvis.research.market.KlineDailyRepository;
 import com.jarvis.research.market.PriceSnapshot;
 import com.jarvis.research.market.PriceSnapshotRepository;
 import com.jarvis.research.user.SimAccount;
@@ -28,10 +30,11 @@ class SimTradeServiceTest {
         SimPositionRepository positionRepo = mock(SimPositionRepository.class);
         SimTradeRepository tradeRepo = mock(SimTradeRepository.class);
         PriceSnapshotRepository snapshotRepo = mock(PriceSnapshotRepository.class);
+        KlineDailyRepository klineRepo = mock(KlineDailyRepository.class);
         AuditService auditService = mock(AuditService.class);
 
         SimTradeService service = new SimTradeService(
-                accountRepo, positionRepo, tradeRepo, snapshotRepo, auditService);
+                accountRepo, positionRepo, tradeRepo, snapshotRepo, klineRepo, auditService);
 
         SimAccount account = SimAccount.builder()
                 .userId(7L)
@@ -83,8 +86,10 @@ class SimTradeServiceTest {
         SimPositionRepository positionRepo = mock(SimPositionRepository.class);
         SimTradeRepository tradeRepo = mock(SimTradeRepository.class);
         PriceSnapshotRepository snapshotRepo = mock(PriceSnapshotRepository.class);
+        KlineDailyRepository klineRepo = mock(KlineDailyRepository.class);
         AuditService auditService = mock(AuditService.class);
-        SimTradeService service = new SimTradeService(accountRepo, positionRepo, tradeRepo, snapshotRepo, auditService);
+        SimTradeService service = new SimTradeService(
+                accountRepo, positionRepo, tradeRepo, snapshotRepo, klineRepo, auditService);
 
         SimAccount account = SimAccount.builder()
                 .userId(9L)
@@ -100,6 +105,65 @@ class SimTradeServiceTest {
         var ex = assertThrows(org.springframework.web.server.ResponseStatusException.class,
                 () -> service.placeOrder(9L, "BUY", "sh518850",
                         new BigDecimal("100"), BigDecimal.ONE, "stale-order"));
+        assertEquals(503, ex.getStatusCode().value());
+    }
+
+    @Test
+    void fallsBackToLatestDailyCloseWhenNoRealtimeSnapshot() {
+        SimAccountRepository accountRepo = mock(SimAccountRepository.class);
+        SimPositionRepository positionRepo = mock(SimPositionRepository.class);
+        SimTradeRepository tradeRepo = mock(SimTradeRepository.class);
+        PriceSnapshotRepository snapshotRepo = mock(PriceSnapshotRepository.class);
+        KlineDailyRepository klineRepo = mock(KlineDailyRepository.class);
+        AuditService auditService = mock(AuditService.class);
+        SimTradeService service = new SimTradeService(
+                accountRepo, positionRepo, tradeRepo, snapshotRepo, klineRepo, auditService);
+
+        SimAccount account = SimAccount.builder()
+                .userId(11L)
+                .cash(new BigDecimal("100000.0000"))
+                .initialCash(new BigDecimal("100000.0000"))
+                .status("ACTIVE")
+                .build();
+        when(accountRepo.findByUserIdForUpdate(11L)).thenReturn(Optional.of(account));
+        // 模拟非交易时段：库中完全没有实时快照
+        when(snapshotRepo.findTopByMarketOrderByTsDesc("gold_etf")).thenReturn(Optional.empty());
+        when(klineRepo.findTopByMarketOrderByDateDesc("gold_etf"))
+                .thenReturn(java.util.List.of(new KlineDaily("gold_etf", "2026-09-07",
+                        10.10, 9.85, 10.20, 9.80, 100.0)));
+
+        Map<String, Object> result = service.placeOrder(11L, "BUY", "sh518850",
+                new BigDecimal("100"), BigDecimal.ONE, "fallback-order");
+
+        assertEquals(0, new BigDecimal("9.85000000").compareTo((BigDecimal) result.get("price")));
+        assertEquals(SimTradeService.SOURCE_DAILY_CLOSE, result.get("priceSource"));
+        assertEquals(true, String.valueOf(result.get("message")).contains("日K收盘价"));
+    }
+
+    @Test
+    void noSnapshotAndNoKlineStillFailsWith503() {
+        SimAccountRepository accountRepo = mock(SimAccountRepository.class);
+        SimPositionRepository positionRepo = mock(SimPositionRepository.class);
+        SimTradeRepository tradeRepo = mock(SimTradeRepository.class);
+        PriceSnapshotRepository snapshotRepo = mock(PriceSnapshotRepository.class);
+        KlineDailyRepository klineRepo = mock(KlineDailyRepository.class);
+        AuditService auditService = mock(AuditService.class);
+        SimTradeService service = new SimTradeService(
+                accountRepo, positionRepo, tradeRepo, snapshotRepo, klineRepo, auditService);
+
+        SimAccount account = SimAccount.builder()
+                .userId(12L)
+                .cash(new BigDecimal("100000.0000"))
+                .initialCash(new BigDecimal("100000.0000"))
+                .status("ACTIVE")
+                .build();
+        when(accountRepo.findByUserIdForUpdate(12L)).thenReturn(Optional.of(account));
+        when(snapshotRepo.findTopByMarketOrderByTsDesc("gold_etf")).thenReturn(Optional.empty());
+        when(klineRepo.findTopByMarketOrderByDateDesc("gold_etf")).thenReturn(java.util.List.of());
+
+        var ex = assertThrows(org.springframework.web.server.ResponseStatusException.class,
+                () -> service.placeOrder(12L, "BUY", "sh518850",
+                        new BigDecimal("100"), BigDecimal.ONE, "no-quote-order"));
         assertEquals(503, ex.getStatusCode().value());
     }
 
