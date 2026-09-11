@@ -289,3 +289,8 @@ test('public homepage keeps auth callbacks and animation lifecycle safe', async 
   assert.match(sessionSource, /restoreRequestId/)
   assert.match(sessionSource, /requestId !== restoreRequestId/)
 })
+
+test('strategy analysis explicitly opts into the bounded CSRF retry policy', async () => {
+  const clientSource = await readFile(join(frontendRoot, 'src/api/client.js'), 'utf8')
+  assert.match(clientSource, /aiStrategy:[\s\S]*csrfRetry:\s*true/)
+})

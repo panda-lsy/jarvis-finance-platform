@@ -216,7 +216,7 @@ export const api = {
     market, confidence, portfolio_value: portfolioValue, days,
   }),
   // 个性化策略生成（FR-11）：风险偏好问卷 → 风险等级 + 建议配置比例 + AI 策略说明
-  aiStrategy: (payload) => post(API_BASE, '/api/ai/analyze/strategy', payload),
+  aiStrategy: (payload) => post(API_BASE, '/api/ai/analyze/strategy', payload, { csrfRetry: true }),
 
   // 管理员账户、配额和功能权限
   adminUsers: (query = '', limit = 50) => get(API_BASE, '/api/admin/users', { query, limit }),

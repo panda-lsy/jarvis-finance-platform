@@ -8,21 +8,29 @@ import com.jarvis.research.service.SimTradeService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.http.MediaType;
 import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.mock.web.MockHttpServletResponse;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.security.authentication.TestingAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import reactor.core.publisher.Flux;
 
+import java.math.BigDecimal;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -152,20 +160,39 @@ class AiControllerTest {
 
         // 纯代理端点：不依赖行情/模拟盘数据，允许使用精简构造函数
         AiController controller = new AiController(proxy, rateLimit, permissions);
-        Map<String, Object> questionnaire = new java.util.LinkedHashMap<>();
-        questionnaire.put("horizon_years", 5);
-        questionnaire.put("max_drawdown_pct", 20);
-        questionnaire.put("target_return_pct", 7.5);
-        questionnaire.put("capital", 100000);
-        questionnaire.put("experience", "basic");
+        StrategyRequest questionnaire = new StrategyRequest();
+        questionnaire.setHorizonYears(new BigDecimal("5"));
+        questionnaire.setMaxDrawdownPct(new BigDecimal("20"));
+        questionnaire.setTargetReturnPct(new BigDecimal("7.5"));
+        questionnaire.setCapital(new BigDecimal("100000"));
+        questionnaire.setExperience("basic");
 
         controller.strategy(questionnaire);
 
         ArgumentCaptor<Object> bodyCaptor = ArgumentCaptor.forClass(Object.class);
         verify(proxy).post(eq("/api/ai/analyze/strategy"), bodyCaptor.capture());
-        // 问卷参数原样透传，Java 不新增/改写任何字段（等级与配置比例由 Python 计算）
-        assertEquals(questionnaire, bodyCaptor.getValue());
+        // 只透传经过边界校验的问卷字段（等级与配置比例仍由 Python 确定性计算）
+        assertEquals(questionnaire.toPayload(), bodyCaptor.getValue());
         verify(permissions).require(42L, "AI_STRATEGY");
         verify(rateLimit).consume(42L);
+    }
+
+    @Test
+    void invalidStrategyQuestionnaireIsRejectedBeforeQuotaConsumption() throws Exception {
+        AiProxyService proxy = mock(AiProxyService.class);
+        AiRateLimitService rateLimit = mock(AiRateLimitService.class);
+        FeaturePermissionService permissions = mock(FeaturePermissionService.class);
+        AiController controller = new AiController(proxy, rateLimit, permissions);
+        MockMvc mvc = MockMvcBuilders.standaloneSetup(controller).build();
+
+        mvc.perform(post("/api/ai/analyze/strategy")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"horizon_years":0.1,"max_drawdown_pct":20,"target_return_pct":7.5,"experience":"basic"}
+                                """))
+                .andExpect(status().isBadRequest());
+
+        verify(rateLimit, never()).consume(anyLong());
+        verify(proxy, never()).post(eq("/api/ai/analyze/strategy"), any());
     }
 }
