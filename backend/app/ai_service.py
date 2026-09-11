@@ -8,6 +8,7 @@ Python 只负责 AI 调用；浏览器不直连本服务，所有请求由 Java 
 import os
 import json
 import logging
+import re
 from typing import Iterator, List, Dict, Optional, Any
 
 import requests
@@ -236,15 +237,98 @@ def financial_report(content: str) -> Dict[str, Any]:
     return _chat_request([{"role": "user", "content": prompt}], temperature=0.3, max_tokens=1500)
 
 
+# ---- 研报情感分析：固定小节切分（FR-08）----
+# 只做确定性切分与字段清理，不推断语义、不做词频统计——避免把模型自由文本
+# 伪装成结构化信号。模型没有按小节输出时 sections 为空，由前端回退展示全文。
+_SENTIMENT_SECTION_PATTERN = re.compile(r"【\s*([^】]{1,16}?)\s*】")
+_SENTIMENT_DISPUTE_SEPARATOR = re.compile(r"\s*[|｜]\s*")
+_SENTIMENT_LIST_MARKER = re.compile(r"^\s*(?:[-*•·]|\d+[.、)])\s*")
+_SENTIMENT_TOPIC_LABEL = re.compile(r"^(?:争议)?(?:焦点|议题|分歧)[:：]\s*")
+_SENTIMENT_BULL_LABEL = re.compile(r"^(?:多方|看多|正面|多头)[:：]\s*")
+_SENTIMENT_BEAR_LABEL = re.compile(r"^(?:空方|看空|负面|空头)[:：]\s*")
+_SENTIMENT_MAX_DISPUTES = 6            # 卡片上限，避免模型输出过长列表撑爆页面
+_SENTIMENT_MAX_FIELD_CHARS = 300       # 单个字段上限，超出截断
+
+
+def _clean_inline(text: str) -> str:
+    """去掉 Markdown 列表符号与加粗标记，得到可直接放进卡片的纯文本。"""
+    cleaned = _SENTIMENT_LIST_MARKER.sub("", str(text).strip())
+    return cleaned.replace("**", "").replace("__", "").strip()
+
+
+def _strip_label(text: str, pattern: "re.Pattern[str]") -> str:
+    return pattern.sub("", text).strip()
+
+
+def parse_sentiment_sections(text: Any) -> Dict[str, Any]:
+    """把模型按【小节】输出的文本切成 {sections, disputes}（确定性，不触网）。
+
+    - sections：小节名 → 正文；未命中任何小节时返回空 dict
+    - disputes：争议焦点小节内 `焦点 | 多方论据 | 空方论据` 的逐行解析结果，
+      形如 [{"id": "dispute-1", "topic": ..., "bull": ..., "bear": ...}]，
+      不足两段的行（凑不成对比）直接忽略。
+    """
+    raw = text if isinstance(text, str) else ""
+    if not raw.strip():
+        return {"sections": {}, "disputes": []}
+
+    matches = list(_SENTIMENT_SECTION_PATTERN.finditer(raw))
+    sections: Dict[str, str] = {}
+    for index, match in enumerate(matches):
+        name = match.group(1)
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(raw)
+        if name in sections:
+            continue
+        sections[name] = raw[match.end():end].strip()
+
+    disputes: List[Dict[str, str]] = []
+    for line in sections.get("争议焦点", "").splitlines():
+        parts = [part for part in (
+            _clean_inline(part) for part in _SENTIMENT_DISPUTE_SEPARATOR.split(line)
+        ) if part]
+        if len(parts) < 2:
+            continue
+        topic = _strip_label(parts[0], _SENTIMENT_TOPIC_LABEL)
+        if not topic:
+            continue
+        bull = _strip_label(parts[1], _SENTIMENT_BULL_LABEL) if len(parts) > 1 else ""
+        bear = _strip_label(parts[2], _SENTIMENT_BEAR_LABEL) if len(parts) > 2 else ""
+        if bear in ("-", "—", "无"):
+            bear = ""
+        disputes.append({
+            "id": f"dispute-{len(disputes) + 1}",
+            "topic": topic[:_SENTIMENT_MAX_FIELD_CHARS],
+            "bull": bull[:_SENTIMENT_MAX_FIELD_CHARS],
+            "bear": bear[:_SENTIMENT_MAX_FIELD_CHARS],
+        })
+        if len(disputes) >= _SENTIMENT_MAX_DISPUTES:
+            break
+
+    return {"sections": sections, "disputes": disputes}
+
+
 def analyze_sentiment(reports: List[str]) -> Dict[str, Any]:
-    """研报情感分析 (返回每篇情感倾向 + 汇总)"""
+    """研报情感分析（FR-08）：要求模型按固定小节输出，服务端确定性切分成可渲染结构。
+
+    返回在模型原始响应上追加：
+      - sections: 小节名 → 正文（未命中任何小节时为空，前端回退展示全文）
+      - disputes: 争议焦点 [{id, topic, bull, bear}]，供「争议点对比卡片」渲染
+    """
     joined = "\n\n---\n\n".join(f"[{i+1}] {t}" for i, t in enumerate(reports))
     prompt = (
-        "请对以下各篇研报进行情感分析，逐篇给出 sentiment(看多/看空/中性)、置信度和关键论据，"
-        "最后给出综合判断。\n\n"
+        "请对以下各篇研报进行情感分析，并**严格按下列四个小节、按此顺序**输出，不要增加或改名小节：\n"
+        "【情感摘要】逐篇给出 sentiment(看多/看空/中性)、置信度与关键论据，最后给出综合判断。\n"
+        "【争议焦点】逐行列出观点相左的焦点，每行格式必须是："
+        "焦点 | 多方论据 | 空方论据（三段用半角竖线 | 分隔，每段一句话）；"
+        "若确实无分歧，输出唯一一行：无显著争议 | 各方结论一致 | -\n"
+        "【趋势判断】行业趋势与关键变量的判断（2-4 条）。\n"
+        "【评级与目标价】评级分布与目标价区间；研报未提及时写“未提及”。\n\n"
         f"{joined}"
     )
-    return _chat_request([{"role": "user", "content": prompt}], temperature=0.2, max_tokens=1500)
+    result = _chat_request([{"role": "user", "content": prompt}], temperature=0.2, max_tokens=1800)
+    parsed = parse_sentiment_sections(result.get("content"))
+    # 兼容既有消费方：content 仍是模型原文，新增两个字段供页面渲染卡片。
+    return {**result, "sections": parsed["sections"], "disputes": parsed["disputes"]}
 
 
 def analyze_chain(node: str, context: str = "") -> Dict[str, Any]:

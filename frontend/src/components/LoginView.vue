@@ -58,7 +58,14 @@ async function submit() {
       res = await api.login(email.value, password.value)
     }
     if (res.code === 200 && res.data?.user) {
-      emit('logged-in', res.data.user)
+      // 登录接口返回成功只代表凭据校验通过；必须再用 Cookie 会话访问 /me，
+      // 确认浏览器已经真正持久化认证 Cookie，避免进入“假登录”工作台。
+      const session = await api.me()
+      if (session.code === 200 && session.data) {
+        emit('logged-in', session.data)
+      } else {
+        error.value = '登录凭证未能建立，请刷新页面后重试'
+      }
     } else {
       error.value = res.message || '操作失败'
     }

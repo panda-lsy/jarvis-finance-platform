@@ -23,11 +23,13 @@ P0 测试使用 Node 20 内置 `node:test`，验证秒级行情 EventSource 解�
 
 ## 生产入口
 
-生产前端由 GitHub Pages 提供，入口为 `https://f.shengxia.me`；GitHub Actions 从 GitHub `main` 分支构建并发布，`frontend/public/CNAME` 固定自定义域名。API 统一访问不变，仍为 `https://agent.shengxia.me/api/**`。
+生产前端由 GitHub Pages 提供，入口为 `https://f.shengxia.me`；GitHub Actions 从 GitHub `main` 分支构建并发布，`frontend/public/CNAME` 固定自定义域名。
+
+默认 API 仍访问 `https://agent.shengxia.me/api/**`。仓库已经支持同源 API 迁移：先部署 `deploy/cloudflare/api-proxy/` 的 Cloudflare Worker Route，再把 GitHub Actions Variable `VITE_API_MODE` 设置为 `same-origin`，前端就会改为访问 `https://f.shengxia.me/api/**`。不要在 Worker Route 未上线时提前打开该变量，否则 GitHub Pages 会对 `/api/**` 返回 404。
 
 Gitee 是代码镜像，不作为 Pages 的直接发布源。修改前端后需要同步推送 GitHub `main`，等待 `Deploy Frontend to GitHub Pages` 完成。Ubuntu/Nginx 仅承载 `agent.shengxia.me` 后端反向代理，不再承载 `f.shengxia.me` 静态文件。
 
-认证使用 Java 写入的 HttpOnly JWT Cookie；浏览器写操作同时携带 Cookie-CSRF `X-XSRF-TOKEN`。不要在前端保存 JWT、AI API Key、GitHub Client Secret 或 Python 内部服务令牌。
+认证使用 Java 写入的 HttpOnly JWT Cookie；浏览器写操作同时携带 Cookie-CSRF `X-XSRF-TOKEN`。登录成功后前端会立即调用 `/api/auth/me` 二次确认 Cookie 会话；CSRF 失效会刷新 token 并仅重试一次，401 才会触发会话失效确认，403/5xx/网络错误不会误清空当前用户。不要在前端保存 JWT、AI API Key、GitHub Client Secret 或 Python 内部服务令牌。
 
 ## 实时行情
 

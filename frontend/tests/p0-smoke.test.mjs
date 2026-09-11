@@ -77,7 +77,7 @@ test('market price stream parses JSON events and closes cleanly', () => {
   assert.equal(source.closed, true)
 })
 
-test('authenticated writes refresh CSRF after a 401/403 and retry once', async () => {
+test('authenticated writes refresh CSRF after a 419 and retry once', async () => {
   const calls = []
   let preferenceWrites = 0
   const previousFetch = globalThis.fetch
@@ -89,7 +89,7 @@ test('authenticated writes refresh CSRF after a 401/403 and retry once', async (
     if (String(url).endsWith('/api/market/preferences')) {
       preferenceWrites += 1
       if (preferenceWrites === 2) {
-        return { ok: false, status: 401, json: async () => ({ code: 401, message: '未登录或登录已过期' }) }
+        return { ok: false, status: 419, json: async () => ({ code: 419, message: 'CSRF token 已失效，请重试' }) }
       }
       return { ok: true, status: 200, json: async () => ({ code: 200, data: { persisted: true } }) }
     }
@@ -122,11 +122,46 @@ test('non-idempotent writes are not replayed after an auth failure', async () =>
   try {
     const response = await api.simOrder('BUY', 'AAPL', 1, 1, 'order-1')
     assert.equal(response.code, 401)
+    assert.equal(response.httpStatus, 401)
   } finally {
     globalThis.fetch = previousFetch
   }
 
   assert.equal(calls.filter(call => call.url.endsWith('/api/sim/order')).length, 1)
+})
+
+test('protected 401 expires the UI session only after /me confirms it', async () => {
+  const previousFetch = globalThis.fetch
+  const previousDispatchEvent = globalThis.window.dispatchEvent
+  const previousCustomEvent = globalThis.CustomEvent
+  const events = []
+
+  globalThis.CustomEvent = class {
+    constructor(type) { this.type = type }
+  }
+  globalThis.window.dispatchEvent = event => {
+    events.push(event.type)
+    return true
+  }
+  globalThis.fetch = async (url) => {
+    if (String(url).endsWith('/api/sim/account')) {
+      return { ok: false, status: 401, json: async () => ({ code: 401, message: 'expired' }) }
+    }
+    if (String(url).endsWith('/api/auth/me')) {
+      return { ok: false, status: 401, json: async () => ({ code: 401, message: 'expired' }) }
+    }
+    throw new Error(`unexpected request: ${url}`)
+  }
+
+  try {
+    const response = await api.simAccount()
+    assert.equal(response.httpStatus, 401)
+    assert.deepEqual(events, ['jarvis:auth-expired'])
+  } finally {
+    globalThis.fetch = previousFetch
+    globalThis.window.dispatchEvent = previousDispatchEvent
+    globalThis.CustomEvent = previousCustomEvent
+  }
 })
 
 test('SSE refreshes CSRF once before consuming a rejected response', async () => {
@@ -141,7 +176,7 @@ test('SSE refreshes CSRF once before consuming a rejected response', async () =>
       return { ok: true, status: 200, json: async () => ({ code: 200, data: { token: 'csrf-sse' } }) }
     }
     if (calls.filter(call => call.url.endsWith('/api/ai/chat/stream')).length === 1) {
-      return { ok: false, status: 403, body: { cancel: async () => { cancelled = true } } }
+      return { ok: false, status: 419, body: { cancel: async () => { cancelled = true } } }
     }
     return {
       ok: true,
@@ -169,6 +204,27 @@ test('SSE refreshes CSRF once before consuming a rejected response', async () =>
   assert.equal(calls.at(-1).token, 'csrf-sse')
 })
 
+test('authorization 403 is not replayed as a CSRF failure', async () => {
+  const calls = []
+  const previousFetch = globalThis.fetch
+  globalThis.fetch = async (url, options = {}) => {
+    calls.push({ url: String(url), method: options.method || 'GET' })
+    if (String(url).endsWith('/api/auth/csrf')) {
+      return { ok: true, status: 200, json: async () => ({ code: 200, data: { token: 'csrf-403' } }) }
+    }
+    return { ok: false, status: 403, json: async () => ({ code: 403, message: '无权限访问该资源' }) }
+  }
+
+  try {
+    const response = await api.adminUpdateStatus(42, false)
+    assert.equal(response.httpStatus, 403)
+  } finally {
+    globalThis.fetch = previousFetch
+  }
+
+  assert.equal(calls.filter(call => call.url.endsWith('/api/admin/users/42/status')).length, 1)
+})
+
 test('late session restore cannot overwrite a successful login', async () => {
   const previousMe = api.me
   let resolveMe
@@ -182,6 +238,27 @@ test('late session restore cannot overwrite a successful login', async () => {
     resolveMe({ code: 401, data: null })
     await restorePromise
     assert.deepEqual(session.user.value, loggedInUser)
+  } finally {
+    api.me = previousMe
+  }
+})
+
+test('session restore preserves an existing user on non-auth failures', async () => {
+  const previousMe = api.me
+  const session = useAuthSession()
+  const loggedInUser = { id: 9, email: 'stable@example.com' }
+  session.acceptLogin(loggedInUser)
+
+  try {
+    api.me = async () => ({ code: 503, httpStatus: 503, message: 'temporary outage' })
+    await session.restore()
+    assert.deepEqual(session.user.value, loggedInUser)
+    assert.equal(session.sessionState.value, 'degraded')
+
+    api.me = async () => { throw new Error('network down') }
+    await session.restore()
+    assert.deepEqual(session.user.value, loggedInUser)
+    assert.equal(session.sessionState.value, 'degraded')
   } finally {
     api.me = previousMe
   }
@@ -269,6 +346,7 @@ test('public homepage keeps auth callbacks and animation lifecycle safe', async 
   const appSource = await readFile(join(frontendRoot, 'src/App.vue'), 'utf8')
   const landingSource = await readFile(join(frontendRoot, 'src/pages/LandingPage.vue'), 'utf8')
   const sessionSource = await readFile(join(frontendRoot, 'src/composables/useAuthSession.js'), 'utf8')
+  const loginSource = await readFile(join(frontendRoot, 'src/components/LoginView.vue'), 'utf8')
 
   assert.match(appSource, /params\.has\('oauth'\)/)
   assert.match(appSource, /history\.replaceState\(/)
@@ -288,6 +366,22 @@ test('public homepage keeps auth callbacks and animation lifecycle safe', async 
   assert.match(viteConfig, /modulePreload:\s*\{[\s\S]*polyfill:\s*false/)
   assert.match(sessionSource, /restoreRequestId/)
   assert.match(sessionSource, /requestId !== restoreRequestId/)
+  assert.match(sessionSource, /sessionState\.value = 'degraded'/)
+  assert.match(loginSource, /const session = await api\.me\(\)/)
+  assert.match(loginSource, /登录凭证未能建立/)
+})
+
+test('sentiment page renders dispute and section cards from backend-shaped data', async () => {
+  const source = await readFile(join(frontendRoot, 'src/pages/SentimentPage.vue'), 'utf8')
+  // 争议焦点卡片的数据来自后端确定性切分结果，前端只负责渲染，不做语义推断
+  assert.match(source, /response\.data\.disputes/)
+  assert.match(source, /response\.data\.sections/)
+  assert.match(source, /v-for="item in disputes" :key="item\.id"/)
+  assert.match(source, /v-for="card in sectionCards" :key="card\.id"/)
+  assert.match(source, /多方论据/)
+  assert.match(source, /空方论据/)
+  // 模型原文仍保留，切分失败时页面不会丢信息
+  assert.match(source, /class="st-output">\{\{ result \}\}/)
 })
 
 test('strategy analysis explicitly opts into the bounded CSRF retry policy', async () => {

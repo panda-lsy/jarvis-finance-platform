@@ -1,0 +1,10 @@
+name = "jarvis-api-proxy"
+main = "src/index.js"
+compatibility_date = "2026-09-11"
+
+[vars]
+API_UPSTREAM_ORIGIN = "https://agent.shengxia.me"
+
+[[routes]]
+pattern = "f.shengxia.me/api/*"
+zone_name = "shengxia.me"

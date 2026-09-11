@@ -64,7 +64,9 @@ class AuthCsrfSecurityTest {
         mockMvc.perform(post("/api/auth/verification/email")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"email\":\"user@example.com\"}"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().is(419))
+                .andExpect(jsonPath("$.code").value(419))
+                .andExpect(jsonPath("$.message").value("CSRF token 已失效，请重试"));
     }
 
     @Test

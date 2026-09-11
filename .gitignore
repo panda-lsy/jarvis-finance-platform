@@ -112,5 +112,10 @@ doc/.srs-render*/
 doc/.srs-work/
 doc/.srs-a11y-audit*.json
 
-# Environment variables
-.env.local
+# Environment variables / secrets (real values must never be committed)
+# 覆盖 backend/.env、java-backend/java.env 等；deploy/env/*.env.example 模板仍可提交
+.env
+.env.*
+*.env
+!.env.example
+!*.env.example

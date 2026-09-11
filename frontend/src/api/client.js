@@ -5,12 +5,20 @@
  */
 // 生产统一入口域名
 const PROD_API = 'https://agent.shengxia.me'
+export const AUTH_EXPIRED_EVENT = 'jarvis:auth-expired'
+
+function configuredApiMode() {
+  return String(import.meta.env?.VITE_API_MODE || '').trim().toLowerCase()
+}
 
 function resolveApiBase() {
   // 本地开发(通过vite代理)走空串
   if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
     return ''
   }
+  // 同源 API 代理准备完成后，可在构建时设置 VITE_API_MODE=same-origin。
+  // 默认仍保持现网 agent.shengxia.me，避免在 Worker Route 尚未启用时产生 404。
+  if (configuredApiMode() === 'same-origin' && window.location.hostname === 'f.shengxia.me') return ''
   return PROD_API
 }
 
@@ -21,6 +29,7 @@ export { API_BASE }
 
 let csrfToken = null
 let csrfPromise = null
+let authProbePromise = null
 
 function resetCsrfToken() {
   csrfToken = null
@@ -44,6 +53,42 @@ async function ensureCsrfToken(base, force = false) {
   return csrfPromise
 }
 
+function withHttpStatus(data, status) {
+  const payload = data && typeof data === 'object' ? data : {}
+  return { ...payload, httpStatus: status }
+}
+
+function isPublicAuthPath(path) {
+  return path === '/api/auth/login'
+    || path === '/api/auth/register'
+    || path === '/api/auth/logout'
+    || path === '/api/auth/csrf'
+    || path.startsWith('/api/auth/verification/')
+    || path.startsWith('/api/auth/password/')
+    || path.startsWith('/api/auth/github/')
+}
+
+function notifyAuthExpired() {
+  if (typeof window?.dispatchEvent !== 'function' || typeof CustomEvent !== 'function') return
+  window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT))
+}
+
+async function confirmSessionAfterUnauthorized(base, path) {
+  if (path === '/api/auth/me' || isPublicAuthPath(path)) return
+  if (!authProbePromise) {
+    authProbePromise = fetch(`${base}/api/auth/me`, { credentials: 'include' })
+      .then((res) => {
+        if (res.status === 401) return false
+        if (res.ok) return true
+        return null
+      })
+      .catch(() => null)
+      .finally(() => { authProbePromise = null })
+  }
+  const valid = await authProbePromise
+  if (valid === false) notifyAuthExpired()
+}
+
 async function request(base, path, options = {}, params = {}) {
   const qs = new URLSearchParams(
     Object.entries(params).filter(([, v]) => v !== undefined && v !== '')
@@ -65,13 +110,12 @@ async function request(base, path, options = {}, params = {}) {
       credentials: 'include',
     })
     const data = await res.json().catch(() => ({}))
-    // 安全 Cookie 可能在后续 GET 响应中被浏览器清理；认证请求和幂等的市场偏好替换
-    // 失败时刷新一次 CSRF token，避免把 CSRF 失败误呈现成“未登录”。
-    const csrfRetryable = path.startsWith('/api/auth/') || path === '/api/market/preferences'
-    if (attempt === 0 && csrfRequired && csrfRetryable && (res.status === 401 || res.status === 403)) {
+    // 后端使用明确的 419 表示 CSRF 失败；401 始终表示认证问题，403 表示权限拒绝，不应自动重放写请求。
+    if (attempt === 0 && csrfRequired && res.status === 419) {
       continue
     }
-    return data
+    if (res.status === 401) await confirmSessionAfterUnauthorized(base, path)
+    return withHttpStatus(data, res.status)
   }
 }
 
@@ -106,7 +150,7 @@ async function postSse(base, path, body, onEvent, signal) {
       body: JSON.stringify(body),
       signal,
     })
-    if (attempt === 0 && (res.status === 401 || res.status === 403)) {
+    if (attempt === 0 && res.status === 419) {
       // Retry only before consuming the stream. This keeps the retry bounded
       // and lets the browser release the rejected response body first.
       await res.body?.cancel?.()
@@ -116,6 +160,7 @@ async function postSse(base, path, body, onEvent, signal) {
   }
 
   if (!res.ok) {
+    if (res.status === 401) await confirmSessionAfterUnauthorized(base, path)
     const text = await res.text()
     let message = text || `HTTP ${res.status}`
     try {

@@ -13,6 +13,7 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.security.web.csrf.CsrfException;
 import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
 import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
 import org.springframework.web.cors.CorsConfiguration;
@@ -74,6 +75,14 @@ public class SecurityConfig {
                     res.setContentType("application/json;charset=UTF-8");
                     res.getWriter().write(objectMapper.writeValueAsString(
                             ApiResponse.error(401, "未登录或登录已过期")));
+                })
+                .accessDeniedHandler((req, res, e) -> {
+                    int status = e instanceof CsrfException ? 419 : 403;
+                    String message = status == 419 ? "CSRF token 已失效，请重试" : "无权限访问该资源";
+                    res.setStatus(status);
+                    res.setContentType("application/json;charset=UTF-8");
+                    res.getWriter().write(objectMapper.writeValueAsString(
+                            ApiResponse.error(status, message)));
                 })
             )
             .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);

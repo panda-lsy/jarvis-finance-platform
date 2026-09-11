@@ -1,5 +1,5 @@
 <script setup>
-import { defineAsyncComponent, nextTick, onMounted, ref } from 'vue'
+import { defineAsyncComponent, nextTick, onMounted, ref, watch } from 'vue'
 import { api } from './api/client'
 import LoginView from './components/LoginView.vue'
 import AppHeader from './components/common/AppHeader.vue'
@@ -22,7 +22,7 @@ const OpsView = defineAsyncComponent(() => import('./components/OpsView.vue'))
 const AdminView = defineAsyncComponent(() => import('./components/AdminView.vue'))
 
 const session = useAuthSession()
-const { user, isLoggedIn } = session
+const { user, isLoggedIn, sessionState } = session
 const workspace = useWorkspaceTabs(user)
 const { activeTab, visitedTabs, tabs, switchTab } = workspace
 const publicView = ref('landing')
@@ -66,6 +66,12 @@ async function updateProfile(displayName) {
   const response = await api.updateProfile(displayName)
   if (response.code === 200 && response.data) session.acceptLogin(response.data)
 }
+
+watch(sessionState, (state) => {
+  if (state !== 'expired') return
+  publicView.value = 'login'
+  replacePublicQuery((params) => params.set('view', 'login'))
+})
 
 onMounted(() => {
   const params = new URLSearchParams(window.location.search)

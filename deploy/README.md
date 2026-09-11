@@ -4,13 +4,15 @@
 
 ```text
 浏览器
-   ├─ https://f.shengxia.me ───────> GitHub Pages（Vue 前端）
-   └─ https://agent.shengxia.me/api/*
-                  ↓
-              Cloudflare
-                  ↓
+   └─ https://f.shengxia.me ───────> GitHub Pages（Vue 前端）
+                  │ /api/*（同源模式启用后）
+                  ▼
+          Cloudflare Worker Route
+                  ▼
+       https://agent.shengxia.me/api/*
+                  ▼
               Nginx :443
-                  ↓
+                  ▼
 Java 127.0.0.1:8200
    ├─ PostgreSQL 127.0.0.1:5432
    └─ Python AI 127.0.0.1:8100
@@ -34,7 +36,7 @@ Java 127.0.0.1:8200
 
 域名控制台需要将 `f.shengxia.me` 指向 GitHub Pages 配置页显示的目标；启用 HTTPS 后，访问 `https://f.shengxia.me/version.json?check=<时间戳>` 可核对当前发布 SHA。Ubuntu/Nginx 不应再配置或覆盖 `f.shengxia.me` 的静态站点，只保留 `agent.shengxia.me` 的 `/api/*` 反向代理。
 
-后端不变：浏览器仍通过 `https://agent.shengxia.me/api/**` 访问 Java，生产 CORS 继续允许 `https://f.shengxia.me`；GitHub OAuth 回调仍在 `agent.shengxia.me`，成功后的前端跳转仍回到 `f.shengxia.me`。
+默认后端路径不变：浏览器仍可直接通过 `https://agent.shengxia.me/api/**` 访问 Java。为减少 Cookie/CORS/SameSite 的跨子域复杂度，推荐按 `deploy/cloudflare/api-proxy/README.md` 先部署 `f.shengxia.me/api/*` Worker Route，再设置 GitHub Actions Variable `VITE_API_MODE=same-origin`。同源模式启用后 GitHub OAuth callback 也必须改为 `https://f.shengxia.me/api/auth/github/callback`。
 
 旧的 Ubuntu 一次性迁移脚本默认不会构建或复制 Nginx 前端；只有明确设置 `DEPLOY_NGINX_FRONTEND=1` 才会启用旧的静态站点复制逻辑。
 

@@ -42,6 +42,10 @@ jobs:
 
       - name: Build Vue app
         working-directory: frontend
+        env:
+          # Cloudflare 的 f.shengxia.me/api/* Worker Route 上线后，将仓库变量
+          # VITE_API_MODE 设为 same-origin 即可无代码切换；未设置时保持现网跨子域 API。
+          VITE_API_MODE: ${{ vars.VITE_API_MODE }}
         run: npm run build
 
       - name: Stamp deployment version
