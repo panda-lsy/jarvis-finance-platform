@@ -13,6 +13,8 @@ const createReport = () => ({ id: nextReportId++, text: '' })
 const reports = ref([createReport()])
 const analyzing = ref(false)
 const result = ref('')
+const sections = ref({}) // 模型按固定小节输出的正文（情感摘要 / 趋势判断 / 评级与目标价）
+const disputes = ref([]) // 争议焦点卡片：由后端确定性切分，前端不做语义推断
 const error = ref('')
 
 const totalChars = computed(() => reports.value.reduce((sum, report) => sum + report.text.length, 0))
@@ -34,8 +36,16 @@ function removeReport(index) {
 function clearAll() {
   reports.value = [createReport()]
   result.value = ''
+  sections.value = {}
+  disputes.value = []
   error.value = ''
 }
+
+// ---- 分节卡片：只渲染模型确实输出的小节，缺哪个就不显示哪个 ----
+const SECTION_ORDER = ['情感摘要', '趋势判断', '评级与目标价']
+const sectionCards = computed(() => SECTION_ORDER
+  .filter(name => sections.value[name])
+  .map(name => ({ id: name, title: name, text: sections.value[name] })))
 
 // ---- 关键词提及统计：不把自由文本中的词频伪装成结构化信号 ----
 const sentimentStats = computed(() => {
@@ -50,10 +60,14 @@ async function analyze() {
   analyzing.value = true
   error.value = ''
   result.value = ''
+  sections.value = {}
+  disputes.value = []
   try {
     const response = await api.aiSentiment(filledReports.value)
     if (response.code !== 200 || !response.data) throw new Error(response.message || '情感分析失败')
     result.value = response.data.content || '（暂无分析结论）'
+    sections.value = response.data.sections || {}
+    disputes.value = Array.isArray(response.data.disputes) ? response.data.disputes : []
   } catch (e) {
     error.value = e?.message || String(e)
   } finally {
@@ -110,9 +124,36 @@ async function analyze() {
             <div class="st-metric"><span>中性提及</span><b>{{ sentimentStats.neutral }}</b></div>
           </div>
 
+          <div v-if="disputes.length" class="st-disputes">
+            <div class="st-block-head">
+              <b>争议焦点</b>
+              <span>观点相左的研报按论据对比 · 共 {{ disputes.length }} 项 · 由模型归纳、服务端切分</span>
+            </div>
+            <div v-for="item in disputes" :key="item.id" class="st-dispute">
+              <div class="st-dispute-topic">{{ item.topic }}</div>
+              <div class="st-sides">
+                <div class="st-side bull">
+                  <span>多方论据</span>
+                  <p>{{ item.bull || '未给出' }}</p>
+                </div>
+                <div class="st-side bear">
+                  <span>空方论据</span>
+                  <p>{{ item.bear || '未提出明确反对论据' }}</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div v-if="sectionCards.length" class="st-sections">
+            <div v-for="card in sectionCards" :key="card.id" class="panel st-section">
+              <div class="st-block-head"><b>{{ card.title }}</b></div>
+              <div class="st-section-body">{{ card.text }}</div>
+            </div>
+          </div>
+
           <div class="panel st-result-panel">
             <div class="st-result-head">
-              <div><b>分析结论</b><span>多空倾向自动识别，仅供参考，请结合原文独立判断</span></div>
+              <div><b>完整分析</b><span>模型原文，多空倾向自动识别，仅供参考，请结合原文独立判断</span></div>
             </div>
             <div class="st-output">{{ result }}</div>
           </div>
@@ -125,7 +166,7 @@ async function analyze() {
         <div v-else class="panel st-empty">
           <div class="st-empty-mark">多·空</div>
           <b>等待分析结果</b>
-          <span>在左侧粘贴一篇或多篇研报文本后运行分析，即可查看多空倾向与综合研判。</span>
+          <span>在左侧粘贴一篇或多篇研报文本后运行分析，即可查看逐篇多空倾向、争议焦点对比与综合研判。</span>
         </div>
       </div>
     </div>
@@ -164,6 +205,23 @@ async function analyze() {
 .st-metric b { color: var(--text); font-size: 16px; font-weight: 680; font-variant-numeric: tabular-nums; line-height: 1; }
 .st-metric b.bull { color: #ef5350; }
 .st-metric b.bear { color: #27c46b; }
+.st-disputes { display: flex; flex-direction: column; gap: 8px; }
+.st-block-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.st-block-head b { color: var(--text); font-size: 12px; font-weight: 680; }
+.st-block-head span { color: var(--subtle); font-size: 9px; }
+.st-dispute { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
+.st-dispute-topic { color: var(--accent); font-size: 11px; font-weight: 650; }
+.st-sides { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px; }
+.st-side { border-left: 3px solid var(--line-strong); background: var(--surface); border-radius: var(--radius-sm); padding: 8px 10px; display: flex; flex-direction: column; gap: 4px; }
+.st-side.bull { border-left-color: #ef5350; }
+.st-side.bear { border-left-color: #27c46b; }
+.st-side span { color: var(--muted); font-size: 9px; }
+.st-side.bull span { color: #ef5350; }
+.st-side.bear span { color: #27c46b; }
+.st-side p { margin: 0; color: var(--text); font-size: 10px; line-height: 1.6; }
+.st-sections { display: flex; flex-direction: column; gap: 8px; }
+.st-section { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; }
+.st-section-body { color: var(--text); font-size: 11px; line-height: 1.75; white-space: pre-wrap; overflow-wrap: anywhere; }
 .st-result-panel { display: flex; flex-direction: column; }
 .st-result-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
 .st-result-head b { color: var(--text); font-size: 12px; font-weight: 680; }
