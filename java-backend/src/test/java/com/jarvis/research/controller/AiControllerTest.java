@@ -138,4 +138,34 @@ class AiControllerTest {
         assertFalse(body.containsKey("days"));
         verify(rateLimit).consume(42L);
     }
+
+    @Test
+    void strategyForwardsQuestionnaireVerbatimAndConsumesQuota() {
+        AiProxyService proxy = mock(AiProxyService.class);
+        AiRateLimitService rateLimit = mock(AiRateLimitService.class);
+        FeaturePermissionService permissions = mock(FeaturePermissionService.class);
+
+        when(proxy.post(eq("/api/ai/analyze/strategy"), any())).thenReturn(Map.of("code", 200));
+
+        SecurityContextHolder.getContext().setAuthentication(
+                new TestingAuthenticationToken(42L, null));
+
+        // 纯代理端点：不依赖行情/模拟盘数据，允许使用精简构造函数
+        AiController controller = new AiController(proxy, rateLimit, permissions);
+        Map<String, Object> questionnaire = new java.util.LinkedHashMap<>();
+        questionnaire.put("horizon_years", 5);
+        questionnaire.put("max_drawdown_pct", 20);
+        questionnaire.put("target_return_pct", 7.5);
+        questionnaire.put("capital", 100000);
+        questionnaire.put("experience", "basic");
+
+        controller.strategy(questionnaire);
+
+        ArgumentCaptor<Object> bodyCaptor = ArgumentCaptor.forClass(Object.class);
+        verify(proxy).post(eq("/api/ai/analyze/strategy"), bodyCaptor.capture());
+        // 问卷参数原样透传，Java 不新增/改写任何字段（等级与配置比例由 Python 计算）
+        assertEquals(questionnaire, bodyCaptor.getValue());
+        verify(permissions).require(42L, "AI_STRATEGY");
+        verify(rateLimit).consume(42L);
+    }
 }

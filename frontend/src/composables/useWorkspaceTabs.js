@@ -1,6 +1,6 @@
 import { computed, ref, watch } from 'vue'
 
-const BASE_TABS = ['行情', '多市场', '回测', '模拟盘', '研究助手', '多空研报', '财报解析', '产业链图谱', '风险预警', '运维']
+const BASE_TABS = ['行情', '多市场', '回测', '模拟盘', '研究助手', '多空研报', '财报解析', '产业链图谱', '风险预警', '策略生成', '运维']
 
 export function useWorkspaceTabs(userRef) {
   const activeTab = ref('行情')

@@ -12,7 +12,7 @@ from typing import Iterator, List, Dict, Optional, Any
 
 import requests
 
-from .research_tools import deterministic_context, quote_metrics, risk_metrics
+from .research_tools import deterministic_context, quote_metrics, risk_metrics, strategy_profile
 
 logger = logging.getLogger(__name__)
 
@@ -221,6 +221,7 @@ def capabilities() -> Dict[str, Any]:
             "智能报价",
             "风险预警（VaR/ES）",
             "模拟盘持仓与杠杆风险分析",
+            "个性化策略生成（风险偏好问卷）",
         ],
     }
 
@@ -312,5 +313,54 @@ def analyze_risk(closes: List[Any], confidence: float = 0.95,
         "available": True,
         "metrics": {key: value for key, value in metrics.items() if key != "alerts"},
         "alerts": alerts,
+        "content": content,
+    }
+
+
+def generate_strategy(horizon_years: Any = None,
+                      max_drawdown_pct: Any = None,
+                      target_return_pct: Any = None,
+                      capital: Any = None,
+                      experience: Any = None) -> Dict[str, Any]:
+    """个性化策略生成（FR-11）：风险等级与配置比例由确定性层计算，LLM 只写策略说明。
+
+    返回 {available, profile, content}；问卷非法时 available=False。
+    """
+    profile = strategy_profile(
+        horizon_years=horizon_years,
+        max_drawdown_pct=max_drawdown_pct,
+        target_return_pct=target_return_pct,
+        capital=capital,
+        experience=experience,
+    )
+    if not profile.get("available"):
+        return {"available": False, "reason": profile.get("reason")}
+
+    allocation_map = {item["label"]: item["pct"] for item in profile.get("allocation", [])}
+    readable = {
+        "风险等级": f"{profile.get('level_label')}（{profile.get('level')}）",
+        "综合得分": profile.get("score"),
+        "投资期限(年)": profile.get("answers", {}).get("horizon_years"),
+        "可承受最大回撤(%)": profile.get("answers", {}).get("max_drawdown_pct"),
+        "目标年化收益(%)": profile.get("answers", {}).get("target_return_pct"),
+        "投资经验": profile.get("answers", {}).get("experience_label"),
+        "建议配置比例(%,合计100)": allocation_map,
+        "资金规模(元)": profile.get("capital"),
+        "黄金ETF建议金额(元)": profile.get("gold_amount"),
+    }
+    prompt = (
+        "你是资产配置顾问。以下【确定性计算结果】由程序依据风险偏好问卷计算，"
+        "禁止自行修改或重算其中的等级、得分与配置比例，数值缺失时如实说明数据不足。\n"
+        f"确定性计算结果: {json.dumps(readable, ensure_ascii=False, default=str)}\n"
+        "请输出个性化投资策略说明：1) 风险等级解读（为什么是该等级）"
+        "2) 配置比例含义（各类资产的作用与黄金ETF的角色）"
+        "3) 执行建议（分批建仓、再平衡频率、止损/止盈纪律，可执行）"
+        "4) 与该等级匹配的注意事项与风险提示。"
+        "要求简洁专业，正文不超过 300 字，配置比例一律引用上面的口径且必须合计 100%。"
+    )
+    content = _chat_request([{"role": "user", "content": prompt}], temperature=0.4, max_tokens=900)
+    return {
+        "available": True,
+        "profile": profile,
         "content": content,
     }

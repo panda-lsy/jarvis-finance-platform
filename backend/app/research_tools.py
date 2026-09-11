@@ -420,3 +420,190 @@ def risk_metrics(closes_raw: Any, confidence: Any = "0.95",
                 "message": "当前样本未命中高风险阈值，维持常规监控。",
             })
     return result
+
+
+# ---- 个性化策略生成：风险偏好问卷 → 风险等级 → 建议配置比例（FR-11）----
+# 问卷分值 → 等级 → 配置比例全部由本层确定性计算，LLM 只负责撰写策略说明，
+# 不得改写等级、得分与配置比例口径。
+_STRATEGY_MAX_HORIZON = Decimal("10")     # 投资期限归一化上限（年），10 年及以上视为满分
+_STRATEGY_MAX_DRAWDOWN = Decimal("40")    # 可承受回撤归一化上限（%）
+_STRATEGY_MAX_TARGET = Decimal("15")      # 目标年化收益归一化上限（%）
+
+# 权重合计 100%（期限 30 + 回撤 30 + 收益 20 + 经验 20）
+_STRATEGY_WEIGHTS = {
+    "horizon": Decimal("0.30"),
+    "drawdown": Decimal("0.30"),
+    "target_return": Decimal("0.20"),
+    "experience": Decimal("0.20"),
+}
+_STRATEGY_EXPERIENCE_SCORE = {
+    "none": Decimal("0"),
+    "basic": Decimal("50"),
+    "rich": Decimal("100"),
+}
+_STRATEGY_EXPERIENCE_LABEL = {
+    "none": "无经验",
+    "basic": "有一定经验",
+    "rich": "经验丰富",
+}
+_Q2 = Decimal("0.01")
+
+# 等级阈值：得分 >= 65 积极型；>= 40 稳健型；其余保守型
+_STRATEGY_LEVEL_THRESHOLDS = (
+    (Decimal("65"), "aggressive", "积极型"),
+    (Decimal("40"), "balanced", "稳健型"),
+    (Decimal("0"), "conservative", "保守型"),
+)
+
+# 建议配置比例（每种等级合计 100%，黄金 ETF 为平台核心配置）
+_STRATEGY_ALLOCATION: Dict[str, tuple] = {
+    "conservative": (
+        ("gold_etf", "黄金ETF", "20"),
+        ("bond", "债券/固收", "40"),
+        ("cash", "现金/货基", "30"),
+        ("equity", "权益类", "10"),
+    ),
+    "balanced": (
+        ("gold_etf", "黄金ETF", "40"),
+        ("bond", "债券/固收", "30"),
+        ("cash", "现金/货基", "15"),
+        ("equity", "权益类", "15"),
+    ),
+    "aggressive": (
+        ("gold_etf", "黄金ETF", "55"),
+        ("bond", "债券/固收", "15"),
+        ("cash", "现金/货基", "10"),
+        ("equity", "权益类", "20"),
+    ),
+}
+
+
+def _clamp_score(value: Decimal) -> Decimal:
+    """把归一化原始分裁剪到 [0, 100]。"""
+    if value < 0:
+        return Decimal("0")
+    if value > 100:
+        return Decimal("100")
+    return value
+
+
+def _strategy_level(score: Decimal) -> tuple:
+    for threshold, level, label in _STRATEGY_LEVEL_THRESHOLDS:
+        if score >= threshold:
+            return level, label
+    return "conservative", "保守型"
+
+
+def strategy_profile(horizon_years: Any = None,
+                     max_drawdown_pct: Any = None,
+                     target_return_pct: Any = None,
+                     capital: Any = None,
+                     experience: Any = None) -> Dict[str, Any]:
+    """风险偏好问卷 → 风险等级 → 建议配置比例（确定性，纯 Decimal）。
+
+    问卷字段：
+      - horizon_years: 计划投资期限（年，>0）
+      - max_drawdown_pct: 可承受的最大回撤（%，>=0）
+      - target_return_pct: 目标年化收益（%，>=0）
+      - experience: none / basic / rich（缺省按 basic）
+      - capital: 可选，资金规模（元），用于换算黄金 ETF 建议金额
+
+    返回（available=False 时仅含 available/reason）：
+      - score / level / level_label：综合得分与风险等级
+      - sub_scores：[{id, label, score, weight_pct}]，四项得分与权重
+      - allocation：[{id, label, pct}]，建议配置比例（合计 100%）
+      - answers：归一化后的问卷答案（便于审计口径）
+      - reasons：[{id, text}]，得分驱动的可读说明
+      - capital / gold_amount（可选）：资金规模与黄金 ETF 建议金额
+    """
+    horizon = _decimal(horizon_years)
+    drawdown = _decimal(max_drawdown_pct)
+    target = _decimal(target_return_pct)
+    if horizon is None or drawdown is None or target is None:
+        return {"available": False, "reason": "invalid_questionnaire"}
+    if horizon <= 0 or drawdown < 0 or target < 0:
+        return {"available": False, "reason": "invalid_questionnaire"}
+
+    experience_key = str(experience).strip().lower() if experience is not None else ""
+    if experience_key not in _STRATEGY_EXPERIENCE_SCORE:
+        experience_key = "basic"
+
+    subs = [
+        ("horizon", "投资期限", _clamp_score(horizon / _STRATEGY_MAX_HORIZON * Decimal("100"))),
+        ("drawdown", "回撤承受力", _clamp_score(drawdown / _STRATEGY_MAX_DRAWDOWN * Decimal("100"))),
+        ("target_return", "收益目标", _clamp_score(target / _STRATEGY_MAX_TARGET * Decimal("100"))),
+        ("experience", "投资经验", _STRATEGY_EXPERIENCE_SCORE[experience_key]),
+    ]
+
+    total = Decimal("0")
+    for key, _label, sub_score in subs:
+        total += sub_score * _STRATEGY_WEIGHTS[key]
+    total = total.quantize(Q4, rounding=ROUND_HALF_UP)
+
+    level, level_label = _strategy_level(total)
+    allocation = [
+        {
+            "id": item_id,
+            "label": item_label,
+            "pct": _fmt(Decimal(pct), Q4),
+        }
+        for item_id, item_label, pct in _STRATEGY_ALLOCATION[level]
+    ]
+
+    reasons = [
+        {
+            "id": "horizon",
+            "text": f"计划投资期限约 {_fmt(horizon, Q4)} 年 → 期限得分 {_fmt(subs[0][2], Q4)}。",
+        },
+        {
+            "id": "drawdown",
+            "text": f"可承受最大回撤 {_fmt(drawdown, Q4)}% → 回撤承受得分 {_fmt(subs[1][2], Q4)}。",
+        },
+        {
+            "id": "target_return",
+            "text": f"目标年化收益 {_fmt(target, Q4)}% → 收益目标得分 {_fmt(subs[2][2], Q4)}。",
+        },
+        {
+            "id": "experience",
+            "text": f"投资经验：{_STRATEGY_EXPERIENCE_LABEL[experience_key]} → 经验得分 {_fmt(subs[3][2], Q4)}。",
+        },
+        {
+            "id": "overall",
+            "text": (
+                f"加权综合得分 {_fmt(total, Q4)}（满分 100）→ 风险等级「{level_label}」，"
+                f"建议黄金ETF配置 {allocation[0]['pct']}%。"
+            ),
+        },
+    ]
+
+    result: Dict[str, Any] = {
+        "available": True,
+        "score": _fmt(total, Q4),
+        "level": level,
+        "level_label": level_label,
+        "sub_scores": [
+            {
+                "id": key,
+                "label": label,
+                "score": _fmt(sub_score, Q4),
+                "weight_pct": _fmt(_STRATEGY_WEIGHTS[key] * Decimal("100"), Q4),
+            }
+            for key, label, sub_score in subs
+        ],
+        "allocation": allocation,
+        "answers": {
+            "horizon_years": _fmt(horizon, Q4),
+            "max_drawdown_pct": _fmt(drawdown, Q4),
+            "target_return_pct": _fmt(target, Q4),
+            "experience": experience_key,
+            "experience_label": _STRATEGY_EXPERIENCE_LABEL[experience_key],
+        },
+        "reasons": reasons,
+    }
+
+    capital_value = _decimal(capital)
+    if capital_value is not None and capital_value > 0:
+        gold_pct = Decimal(allocation[0]["pct"])
+        result["capital"] = _fmt(capital_value, _Q2)
+        result["gold_amount"] = _fmt(capital_value * gold_pct / Decimal("100"), _Q2)
+    return result

@@ -135,6 +135,16 @@ public class AiController {
         return postAndRecord("/api/ai/quote", body);
     }
 
+    /**
+     * 个性化策略生成（FR-11）：问卷参数纯转发，不涉及服务端取数。
+     * 风险等级与建议配置比例由 Python 确定性计算层生成，Java 不做任何改写。
+     */
+    @PostMapping("/analyze/strategy")
+    public Map<String, Object> strategy(@RequestBody Map<String, Object> body) {
+        consumeAiQuota("AI_STRATEGY");
+        return postAndRecord("/api/ai/analyze/strategy", body);
+    }
+
     private Map<String, Object> enrichChatBody(Map<String, Object> body) {
         if (marketDataService == null) return body;
         Map<String, Object> enriched = new LinkedHashMap<>();

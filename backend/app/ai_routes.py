@@ -76,6 +76,19 @@ class RiskReq(BaseModel):
     symbol: Optional[str] = Field(default=None, max_length=32)
 
 
+class StrategyReq(BaseModel):
+    """个性化策略生成（FR-11）：风险偏好问卷字段。
+
+    范围在接口层做硬校验（问卷由前端固定选项产生，越界视为客户端错误）；
+    等级与配置比例的映射逻辑放在确定性计算层。
+    """
+    horizon_years: float = Field(ge=0.5, le=30)
+    max_drawdown_pct: float = Field(ge=1, le=60)
+    target_return_pct: float = Field(ge=0, le=50)
+    capital: Optional[float] = Field(default=None, gt=0, le=1_000_000_000)
+    experience: Literal["none", "basic", "rich"] = "basic"
+
+
 def _guard(fn, **kw):
     """执行并统一把 RuntimeError 转 502"""
     try:
@@ -153,6 +166,17 @@ def analyze_risk(req: RiskReq):
                            confidence=req.confidence,
                            portfolio_value=req.portfolio_value,
                            symbol=req.symbol)}
+
+
+@router.post("/analyze/strategy")
+def analyze_strategy(req: StrategyReq):
+    return {"code": 200, "message": "ok",
+            "data": _guard(ai_service.generate_strategy,
+                           horizon_years=req.horizon_years,
+                           max_drawdown_pct=req.max_drawdown_pct,
+                           target_return_pct=req.target_return_pct,
+                           capital=req.capital,
+                           experience=req.experience)}
 
 
 @router.post("/quote")
