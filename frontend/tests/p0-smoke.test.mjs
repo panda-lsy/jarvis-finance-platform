@@ -77,7 +77,7 @@ test('market price stream parses JSON events and closes cleanly', () => {
   assert.equal(source.closed, true)
 })
 
-test('authenticated writes refresh CSRF after a 419/403 and retry once', async () => {
+test('authenticated writes refresh CSRF after a 419 and retry once', async () => {
   const calls = []
   let preferenceWrites = 0
   const previousFetch = globalThis.fetch
@@ -176,7 +176,7 @@ test('SSE refreshes CSRF once before consuming a rejected response', async () =>
       return { ok: true, status: 200, json: async () => ({ code: 200, data: { token: 'csrf-sse' } }) }
     }
     if (calls.filter(call => call.url.endsWith('/api/ai/chat/stream')).length === 1) {
-      return { ok: false, status: 403, body: { cancel: async () => { cancelled = true } } }
+      return { ok: false, status: 419, body: { cancel: async () => { cancelled = true } } }
     }
     return {
       ok: true,
@@ -202,6 +202,27 @@ test('SSE refreshes CSRF once before consuming a rejected response', async () =>
   assert.equal(cancelled, true)
   assert.equal(calls.filter(call => call.url.endsWith('/api/ai/chat/stream')).length, 2)
   assert.equal(calls.at(-1).token, 'csrf-sse')
+})
+
+test('authorization 403 is not replayed as a CSRF failure', async () => {
+  const calls = []
+  const previousFetch = globalThis.fetch
+  globalThis.fetch = async (url, options = {}) => {
+    calls.push({ url: String(url), method: options.method || 'GET' })
+    if (String(url).endsWith('/api/auth/csrf')) {
+      return { ok: true, status: 200, json: async () => ({ code: 200, data: { token: 'csrf-403' } }) }
+    }
+    return { ok: false, status: 403, json: async () => ({ code: 403, message: '无权限访问该资源' }) }
+  }
+
+  try {
+    const response = await api.adminUpdateStatus(42, false)
+    assert.equal(response.httpStatus, 403)
+  } finally {
+    globalThis.fetch = previousFetch
+  }
+
+  assert.equal(calls.filter(call => call.url.endsWith('/api/admin/users/42/status')).length, 1)
 })
 
 test('late session restore cannot overwrite a successful login', async () => {

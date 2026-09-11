@@ -18,7 +18,7 @@ function resolveApiBase() {
   }
   // 同源 API 代理准备完成后，可在构建时设置 VITE_API_MODE=same-origin。
   // 默认仍保持现网 agent.shengxia.me，避免在 Worker Route 尚未启用时产生 404。
-  if (configuredApiMode() === 'same-origin') return ''
+  if (configuredApiMode() === 'same-origin' && window.location.hostname === 'f.shengxia.me') return ''
   return PROD_API
 }
 
@@ -110,9 +110,8 @@ async function request(base, path, options = {}, params = {}) {
       credentials: 'include',
     })
     const data = await res.json().catch(() => ({}))
-    // CSRF 失败发生在业务方法执行前，因此所有写请求都可以安全地刷新 token 后重试一次。
-    // 新后端返回 419；兼容旧部署的 403，401 则始终视为认证问题，不再误当 CSRF。
-    if (attempt === 0 && csrfRequired && (res.status === 419 || res.status === 403)) {
+    // 后端使用明确的 419 表示 CSRF 失败；401 始终表示认证问题，403 表示权限拒绝，不应自动重放写请求。
+    if (attempt === 0 && csrfRequired && res.status === 419) {
       continue
     }
     if (res.status === 401) await confirmSessionAfterUnauthorized(base, path)
@@ -151,7 +150,7 @@ async function postSse(base, path, body, onEvent, signal) {
       body: JSON.stringify(body),
       signal,
     })
-    if (attempt === 0 && (res.status === 419 || res.status === 403)) {
+    if (attempt === 0 && res.status === 419) {
       // Retry only before consuming the stream. This keeps the retry bounded
       // and lets the browser release the rejected response body first.
       await res.body?.cancel?.()
