@@ -55,9 +55,11 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 8100
 | POST | `/api/ai/financial/report` | 财报文本分析 |
 | POST | `/api/ai/analyze/sentiment` | 研报情感分析 |
 | POST | `/api/ai/analyze/chain` | 产业链分析 |
+| POST | `/api/ai/analyze/risk` | 风险预警（VaR/ES/年化波动率/最大回撤，历史模拟法） |
+| POST | `/api/ai/analyze/strategy` | 个性化策略生成（风险偏好问卷 → 风险等级 + 建议配置比例） |
 | POST | `/api/ai/quote` | 行情智能解读 |
 
-AI 对话中的价格、SMA5/SMA20、EMA12、RSI14、20期支撑/阻力，以及当前用户模拟盘的总敞口、净权益、总杠杆、维持保证金率、单仓 ROE、集中度和会计一致性检查，均由 `app/research_tools.py` 在 Python 内确定性计算；LLM 只负责解释这些结果。Java 会覆盖客户端同名 `research_context`，浏览器不能伪造系统量化上下文。
+AI 对话中的价格、SMA5/SMA20、EMA12、RSI14、20期支撑/阻力，以及当前用户模拟盘的总敞口、净权益、总杠杆、维持保证金率、单仓 ROE、集中度和会计一致性检查，均由 `app/research_tools.py` 在 Python 内确定性计算；LLM 只负责解释这些结果。风险预警的 VaR/ES/波动率/最大回撤与个性化策略的得分/风险等级/配置比例同样在该确定性层计算，模型不得改写数值口径。Java 会覆盖客户端同名 `research_context`（风险预警则覆盖 `closes`），浏览器不能伪造系统量化上下文。
 
 所有请求必须带：
 

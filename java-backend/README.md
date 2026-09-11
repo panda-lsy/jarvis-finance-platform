@@ -84,7 +84,7 @@ java -jar target/gold-research-backend-*.jar
 - HttpOnly JWT Cookie 配合 Cookie-CSRF；浏览器 POST 必须携带 `X-XSRF-TOKEN`。认证入口另使用长期 HttpOnly 随机 `jarvis_device` Cookie 做设备维度限流，不包含用户身份信息。
 - 登录按账号/IP/设备限流；注册按 IP/设备限流；验证码按邮箱/IP/设备分别限流。内存窗口有过期回收和最大 key 数保护，避免随机来源造成内存型 DoS。
 - AI 请求按用户限流，Python 只接受 `X-Internal-Service-Token`；聊天上下文中的行情、K线和当前用户模拟盘快照由 Java 服务端注入，客户端同名字段会被覆盖。
-- AI 功能权限由 Java 后端按 `AI_CHAT`、`AI_CHAT_STREAM`、`AI_REPORT`、`AI_SENTIMENT`、`AI_CHAIN`、`AI_QUOTE`、`AI_RISK` 白名单校验。
+- AI 功能权限由 Java 后端按 `AI_CHAT`、`AI_CHAT_STREAM`、`AI_REPORT`、`AI_SENTIMENT`、`AI_CHAIN`、`AI_QUOTE`、`AI_RISK`、`AI_STRATEGY` 白名单校验。
 - AI 流式链路使用 MVC `SseEmitter`；浏览器主动停止/断开时取消 Java → Python 订阅。
 - 核心行情与模拟交易接入 Micrometer：采集成功/失败、源延迟、stale tick、采集调度 heartbeat、快照拒绝落库、SSE 在线数/广播 heartbeat/发送失败、订单成功/幂等重放、风控 stale skip、强平次数均暴露到 Prometheus；指标不使用 userId 或自由 symbol 作为标签。
 - 生产 Hikari 获取连接超时 5 秒、validation 2 秒，readiness 使用数据库 `SELECT 1`。
