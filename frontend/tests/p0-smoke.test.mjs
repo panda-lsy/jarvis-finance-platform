@@ -111,6 +111,64 @@ test('authenticated writes refresh CSRF after a 401/403 and retry once', async (
   assert.equal(calls[4].token, 'csrf-4')
 })
 
+test('non-idempotent writes are not replayed after an auth failure', async () => {
+  const calls = []
+  const previousFetch = globalThis.fetch
+  globalThis.fetch = async (url, options = {}) => {
+    calls.push({ url: String(url), method: options.method || 'GET' })
+    return { ok: false, status: 401, json: async () => ({ code: 401, message: '未登录或登录已过期' }) }
+  }
+
+  try {
+    const response = await api.simOrder('BUY', 'AAPL', 1, 1, 'order-1')
+    assert.equal(response.code, 401)
+  } finally {
+    globalThis.fetch = previousFetch
+  }
+
+  assert.equal(calls.filter(call => call.url.endsWith('/api/sim/order')).length, 1)
+})
+
+test('SSE refreshes CSRF once before consuming a rejected response', async () => {
+  const calls = []
+  let streamReads = 0
+  let cancelled = false
+  const previousFetch = globalThis.fetch
+  globalThis.fetch = async (url, options = {}) => {
+    const entry = { url: String(url), method: options.method || 'GET', token: options.headers?.['X-XSRF-TOKEN'] || '' }
+    calls.push(entry)
+    if (entry.url.endsWith('/api/auth/csrf')) {
+      return { ok: true, status: 200, json: async () => ({ code: 200, data: { token: 'csrf-sse' } }) }
+    }
+    if (calls.filter(call => call.url.endsWith('/api/ai/chat/stream')).length === 1) {
+      return { ok: false, status: 403, body: { cancel: async () => { cancelled = true } } }
+    }
+    return {
+      ok: true,
+      status: 200,
+      body: {
+        getReader: () => ({
+          read: async () => streamReads++ === 0
+            ? { value: new TextEncoder().encode('event: answer\ndata: {"ok":true}\n\n'), done: false }
+            : { value: undefined, done: true },
+        }),
+      },
+    }
+  }
+
+  try {
+    const events = []
+    await api.aiChatStream([{ role: 'user', content: 'hi' }], event => events.push(event))
+    assert.deepEqual(events, [{ event: 'answer', data: { ok: true } }])
+  } finally {
+    globalThis.fetch = previousFetch
+  }
+
+  assert.equal(cancelled, true)
+  assert.equal(calls.filter(call => call.url.endsWith('/api/ai/chat/stream')).length, 2)
+  assert.equal(calls.at(-1).token, 'csrf-sse')
+})
+
 test('late session restore cannot overwrite a successful login', async () => {
   const previousMe = api.me
   let resolveMe
@@ -214,10 +272,20 @@ test('public homepage keeps auth callbacks and animation lifecycle safe', async 
 
   assert.match(appSource, /params\.has\('oauth'\)/)
   assert.match(appSource, /history\.replaceState\(/)
-  assert.match(landingSource, /typeof window\.IntersectionObserver === 'function'/)
-  assert.match(landingSource, /window\.matchMedia\?\./)
-  assert.match(landingSource, /const timers = new Set\(\)/)
-  assert.match(landingSource, /timers\.delete\(/)
+  assert.match(appSource, /@login="showLogin"/)
+  assert.match(landingSource, /src="\/landing\/index\.html"/)
+  assert.match(landingSource, /textContent\?\.includes\('进入 JARVIS'\)/)
+  assert.match(landingSource, /emit\('login'\)/)
+  assert.doesNotMatch(landingSource, /observe\(frame\.value\)/)
+  assert.doesNotMatch(landingSource, /const timers = new Set\(\)/)
+  assert.match(landingSource, /onBeforeUnmount\(/)
+  const landingDocument = await readFile(join(frontendRoot, 'public/landing/index.html'), 'utf8')
+  assert.match(landingDocument, /const createObserver = \(callback, options\)/)
+  assert.match(landingDocument, /revealHeroFallback/)
+  assert.match(landingDocument, /addEventListener\('error', revealHeroFallback\)/)
+  assert.match(landingDocument, /playback\.catch\(revealHeroFallback\)/)
+  const viteConfig = await readFile(join(frontendRoot, 'vite.config.js'), 'utf8')
+  assert.match(viteConfig, /modulePreload:\s*\{[\s\S]*polyfill:\s*false/)
   assert.match(sessionSource, /restoreRequestId/)
   assert.match(sessionSource, /requestId !== restoreRequestId/)
 })

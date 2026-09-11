@@ -5,6 +5,14 @@ import vue from '@vitejs/plugin-vue'
 export default defineConfig({
   base: '/',
   plugins: [vue()],
+  build: {
+    // GitHub Pages targets modern browsers. The injected modulepreload
+    // MutationObserver shim is incompatible with the embedded preview
+    // browser, while native modulepreload is supported by the target.
+    modulePreload: {
+      polyfill: false,
+    },
+  },
   server: {
     port: 5173,
     // 浏览器只访问 Java 主后端；Java 再通过内部令牌调用本机 Python AI 服务。

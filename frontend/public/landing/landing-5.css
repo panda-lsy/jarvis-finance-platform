@@ -1,0 +1,89 @@
+.connector{position:absolute;height:1px;background:linear-gradient(90deg,transparent,rgba(201,171,112,.32),transparent);transform-origin:left center;}
+
+    .cta { padding: 180px 28px 110px; text-align: center; position: relative; }.cta::before{content:'';position:absolute;width:800px;height:500px;left:50%;top:50%;transform:translate(-50%,-55%);background:radial-gradient(ellipse,rgba(201,171,112,.11),transparent 65%);pointer-events:none}.cta-inner{position:relative;z-index:2}.cta .eyebrow{margin-bottom:22px}.cta h2{max-width:900px;margin:0 auto}.cta .hero-actions{margin-top:36px}
+    footer { border-top:1px solid var(--line-soft); padding:28px; color:#5f5d57; font-size:11px; }.footer-inner{width:min(100%,var(--max));margin:0 auto;display:flex;justify-content:space-between;gap:22px;flex-wrap:wrap}.footer-links{display:flex;gap:18px}.footer-links a:hover{color:#aaa79f}
+
+    .reveal { opacity: 0; transform: translateY(26px); transition: opacity .72s ease, transform .72s cubic-bezier(.22,1,.36,1); }.reveal.visible { opacity: 1; transform: none; }
+    @media (prefers-reduced-motion: reduce) { * { scroll-behavior:auto!important; animation:none!important; transition:none!important; } .reveal { opacity:1; transform:none; } }
+    @media(max-width:1050px){.nav-links{display:none}.workspace{grid-template-columns:54px 1fr 2.5fr}.terminal-side{display:none}.showcase{grid-template-columns:1fr;gap:34px}.visual{min-height:520px}.copy-stack{max-width:700px}.hero{min-height:auto}.hero-stage{margin-top:60px}.ai-window{grid-template-columns:1fr 1.25fr}.final-visual{min-height:520px}}
+    @media(max-width:760px){.nav{height:62px}.nav-inner{width:calc(100% - 28px)}.nav-actions .btn:first-child{display:none}.hero{padding:125px 16px 65px}.hero-stage{width:100%;margin-top:50px}.hero-copy{width:min(100%,680px)}.workspace{grid-template-columns:44px 1fr;min-height:520px}.watch{display:none}.chart-pane{padding:14px}.chart-svg{height:300px}.terminal{border-radius:10px}.section{padding:105px 16px}.section-head{margin-bottom:45px}.visual{min-height:470px}.ai-window{inset:18px;grid-template-columns:1fr}.ai-left{display:none}.market-grid{inset:18px}.backtest-window{inset:18px;grid-template-rows:1fr 180px}.stats{grid-template-columns:repeat(2,1fr)}.eq-svg{height:260px}.full-bleed{padding:110px 16px 30px}.final-visual{min-height:520px}.node-market{left:5%;top:8%;width:210px}.node-ai{right:5%;top:30%;width:210px}.node-backtest{left:8%;bottom:7%;width:210px}.node-center{width:170px;left:63%}.cta{padding:125px 16px 80px}.footer-inner{flex-direction:column}.ticker{min-width:190px;padding:16px 20px}}
+  
+
+    /* =========================================================
+       V7 MOTION SYSTEM — four modules, four distinct languages
+       AI = sequential analysis / scan
+       Markets = live quote tick / flowing sparklines
+       Backtest = historical draw / inspect cursor
+       Workspace = node linking / data pulses
+       ========================================================= */
+    .fx-ai,
+    .fx-market,
+    .fx-backtest,
+    .fx-workspace { isolation: isolate; }
+
+    /* A — JARVIS VIEW: progressive reasoning, not generic card motion */
+    .fx-ai .analysis-head,
+    .fx-ai .factor,
+    .fx-ai .thesis { opacity: 0; }
+    .fx-ai .analysis-head { transform: translateY(8px); }
+    .fx-ai .factor { transform: translateX(-8px); }
+    .fx-ai .thesis { transform: translateY(9px); }
+    .fx-ai .bar i {
+      width: var(--factor-width, 0%);
+      transform: scaleX(0);
+      transform-origin: left center;
+      will-change: transform;
+    }
+    .fx-ai.fx-active .analysis-head { animation: aiHeadIn .58s .08s cubic-bezier(.22,1,.36,1) both; }
+    .fx-ai.fx-active .factor {
+      animation: aiFactorIn .52s calc(.34s + var(--factor-index, 0) * .16s) cubic-bezier(.22,1,.36,1) both;
+    }
+    .fx-ai.fx-active .factor .bar i {
+      animation: aiBarGrow .92s calc(.50s + var(--factor-index, 0) * .16s) cubic-bezier(.22,1,.36,1) both;
+    }
+    .fx-ai.fx-active .thesis { animation: aiThesisIn .68s 1.26s cubic-bezier(.22,1,.36,1) both; }
+    .fx-ai .confidence-value { color: #d7b978; font-weight: 600; font-variant-numeric: tabular-nums; }
+    .fx-ai .ai-right { position: relative; overflow: hidden; }
+    .fx-ai .ai-right::after {
+      content: '';
+      position: absolute;
+      inset: -35% -55%;
+      width: 42%;
+      transform: translateX(-180%) rotate(13deg);
+      background: linear-gradient(90deg, transparent, rgba(228,203,150,.08), rgba(255,255,255,.045), transparent);
+      pointer-events: none;
+      opacity: 0;
+      mix-blend-mode: screen;
+    }
+    .fx-ai.fx-active .ai-right::after { animation: aiScan 7.6s 2.15s cubic-bezier(.3,.1,.3,1) infinite; }
+    .fx-ai .factor { transition: opacity .24s ease, transform .24s ease, filter .24s ease; }
+    .fx-ai .factor-row span:last-child { transition: text-shadow .22s ease, filter .22s ease; }
+    @media (hover:hover) {
+      .fx-ai .ai-right:hover .factor { opacity: .42; filter: saturate(.75); }
+      .fx-ai .ai-right:hover .factor:hover { animation:none!important; opacity: 1; transform: translateX(3px); filter: none; }
+      .fx-ai .factor:hover .factor-row span:last-child { text-shadow: 0 0 14px currentColor; }
+      .fx-ai .factor:hover .bar i { filter: brightness(1.28); }
+    }
+    @keyframes aiHeadIn { to { opacity:1; transform:none; } }
+    @keyframes aiFactorIn { to { opacity:1; transform:none; } }
+    @keyframes aiBarGrow { to { transform:scaleX(1); } }
+    @keyframes aiThesisIn { to { opacity:1; transform:none; } }
+    @keyframes aiScan {
+      0%, 66% { transform: translateX(-185%) rotate(13deg); opacity:0; }
+      70% { opacity:.92; }
+      84% { transform: translateX(520%) rotate(13deg); opacity:.24; }
+      100% { transform: translateX(520%) rotate(13deg); opacity:0; }
+    }
+
+    /* B — CROSS MARKET: staggered terminal ignition + live pulse */
+    .fx-market .market-card {
+      opacity: 0;
+      transform: translateY(16px) scale(.985);
+      border-color: rgba(255,255,255,.065);
+      transition: transform .24s ease, border-color .24s ease, background .24s ease, box-shadow .24s ease;
+      will-change: transform;
+    }
+    .fx-market.fx-active .market-card {
+      animation: marketIgnite .68s calc(.08s + var(--card-index, 0) * .13s) cubic-bezier(.22,1,.36,1) both;
+    }
+    

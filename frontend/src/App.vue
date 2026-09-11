@@ -27,22 +27,27 @@ const workspace = useWorkspaceTabs(user)
 const { activeTab, visitedTabs, tabs, switchTab } = workspace
 const publicView = ref('landing')
 
-function showLogin() {
-  publicView.value = 'login'
-  window.scrollTo({ top: 0, behavior: 'smooth' })
+function replacePublicQuery(mutator) {
+  const url = new URL(window.location.href)
+  mutator(url.searchParams)
+  const query = url.searchParams.toString()
+  window.history.replaceState(window.history.state, document.title, `${url.pathname}${query ? `?${query}` : ''}${url.hash}`)
 }
 
 function showLanding() {
   publicView.value = 'landing'
+  replacePublicQuery((params) => params.delete('view'))
   window.scrollTo({ top: 0, behavior: 'smooth' })
 }
 
+function showLogin() {
+  publicView.value = 'login'
+  replacePublicQuery((params) => params.set('view', 'login'))
+  window.scrollTo({ top: 0, behavior: 'auto' })
+}
+
 function clearOAuthQuery() {
-  const url = new URL(window.location.href)
-  if (!url.searchParams.has('oauth')) return
-  url.searchParams.delete('oauth')
-  const query = url.searchParams.toString()
-  window.history.replaceState(window.history.state, document.title, `${url.pathname}${query ? `?${query}` : ''}${url.hash}`)
+  replacePublicQuery((params) => params.delete('oauth'))
 }
 
 function handleLoggedIn(value) {
@@ -54,6 +59,7 @@ async function logout() {
   await session.logout()
   workspace.reset()
   publicView.value = 'landing'
+  replacePublicQuery((params) => params.delete('view'))
 }
 
 async function updateProfile(displayName) {
@@ -64,7 +70,8 @@ async function updateProfile(displayName) {
 onMounted(() => {
   const params = new URLSearchParams(window.location.search)
   const hasOAuthResult = params.has('oauth')
-  if (hasOAuthResult) publicView.value = 'login'
+  const wantsLogin = params.get('view') === 'login'
+  if (hasOAuthResult || wantsLogin) publicView.value = 'login'
   session.restore()
   // 等 LoginView 读取完 OAuth 结果后再清理地址栏，避免返回官网后重复显示旧错误。
   if (hasOAuthResult) nextTick(clearOAuthQuery)
@@ -72,7 +79,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <LandingPage v-if="!isLoggedIn && publicView === 'landing'" @enter="showLogin" />
+  <LandingPage v-if="!isLoggedIn && publicView === 'landing'" @login="showLogin" />
 
   <div v-else-if="!isLoggedIn" class="auth-shell">
     <button type="button" class="home-back" @click="showLanding">← 返回官网</button>

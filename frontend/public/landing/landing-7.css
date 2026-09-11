@@ -1,0 +1,103 @@
+.fx-workspace .node-center::before {
+      content:'';
+      position:absolute;
+      inset:-45px;
+      z-index:-1;
+      border-radius:50%;
+      background:radial-gradient(circle,rgba(201,171,112,.115),rgba(201,171,112,.035) 32%,transparent 68%);
+      opacity:0;
+      pointer-events:none;
+    }
+    .fx-workspace.fx-active .node-center::before { animation:centerField 6.8s 1.4s ease-in-out infinite; }
+    .fx-workspace .connector {
+      height:1px;
+      background:linear-gradient(90deg,transparent,rgba(201,171,112,.34),rgba(201,171,112,.2),transparent);
+      transform-origin:left center;
+      transform:rotate(var(--rot,0deg)) scaleX(0);
+      opacity:0;
+      z-index:1;
+      overflow:visible;
+      transition:filter .25s ease, opacity .25s ease;
+    }
+    .fx-workspace.fx-active .connector {
+      animation:connectorDraw .72s calc(.88s + var(--line-index, 0) * .15s) cubic-bezier(.22,1,.36,1) both;
+    }
+    .fx-workspace .connector::after {
+      content:'';
+      position:absolute;
+      top:50%;
+      left:0;
+      width:5px;
+      height:5px;
+      border-radius:50%;
+      transform:translate(-50%,-50%);
+      background:#e3c57f;
+      box-shadow:0 0 12px rgba(227,197,127,.75),0 0 24px rgba(201,171,112,.32);
+      opacity:0;
+    }
+    .fx-workspace.fx-active .connector::after {
+      animation:routePulse var(--pulse-duration,5.4s) var(--pulse-delay,2s) linear infinite;
+    }
+    .fx-workspace.fx-active .connector.reverse::after { animation-direction:reverse; }
+    .fx-workspace.has-focus .link-node { opacity:.34; filter:saturate(.72); }
+    .fx-workspace.has-focus .connector { opacity:.17; }
+    .fx-workspace.focus-market .node-market,
+    .fx-workspace.focus-market .node-center,
+    .fx-workspace.focus-ai .node-ai,
+    .fx-workspace.focus-ai .node-center,
+    .fx-workspace.focus-backtest .node-backtest,
+    .fx-workspace.focus-backtest .node-center,
+    .fx-workspace.focus-center .link-node { opacity:1; filter:none; }
+    .fx-workspace.focus-market .connector-market,
+    .fx-workspace.focus-ai .connector-ai,
+    .fx-workspace.focus-backtest .connector-backtest,
+    .fx-workspace.focus-center .connector { opacity:1; filter:brightness(1.6); }
+    @media (hover:hover) {
+      .fx-workspace .link-node:hover { border-color:rgba(201,171,112,.26); box-shadow:0 20px 60px rgba(0,0,0,.32),0 0 0 1px rgba(201,171,112,.04) inset; }
+      .fx-workspace .node-center:hover { background:linear-gradient(145deg,rgba(201,171,112,.16),#101010); }
+    }
+    @keyframes nodeMarketIn { to { opacity:1; transform:none; } }
+    @keyframes nodeAiIn { to { opacity:1; transform:none; } }
+    @keyframes nodeBacktestIn { to { opacity:1; transform:none; } }
+    @keyframes nodeCenterIn { to { opacity:1; transform:translate(-50%,-50%) scale(1); } }
+    @keyframes connectorDraw { from { opacity:0; transform:rotate(var(--rot,0deg)) scaleX(0); } to { opacity:1; transform:rotate(var(--rot,0deg)) scaleX(1); } }
+    @keyframes routePulse {
+      0%, 12% { left:0; opacity:0; }
+      18% { opacity:1; }
+      72% { opacity:.9; }
+      84% { left:100%; opacity:0; }
+      100% { left:100%; opacity:0; }
+    }
+    @keyframes centerField {
+      0%,100% { opacity:.34; transform:scale(.96); }
+      50% { opacity:.72; transform:scale(1.07); }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .fx-ai .analysis-head,.fx-ai .factor,.fx-ai .thesis,
+      .fx-market .market-card,.fx-backtest .stat,.fx-workspace .link-node { opacity:1!important; transform:none!important; }
+      .fx-ai .bar i { transform:scaleX(1)!important; }
+      .fx-market .spark-base,.fx-backtest .eq-line { stroke-dashoffset:0!important; }
+      .fx-market .spark-live,.fx-ai .ai-right::after,.fx-workspace .connector::after,.fx-workspace .node-center::after {
+      content:''; position:absolute; inset:1px; border-radius:9px;
+      background:linear-gradient(145deg,rgba(18,18,18,.96),rgba(10,10,10,.98));
+      z-index:0;
+    }
+    .fx-workspace .node-center > * { position:relative; z-index:1; }
+.fx-workspace .node-center::before { display:none!important; }
+      .fx-backtest .eq-area { opacity:.68!important; }
+      .fx-workspace .node-center { transform:translate(-50%,-50%) scale(1)!important; }
+      .fx-workspace .connector { opacity:1!important; transform:rotate(var(--rot,0deg)) scaleX(1)!important; }
+    }
+
+
+    @media (max-width: 760px) {
+      .hero { padding-top: 118px; }
+      .hero-copy { width: min(100%, 620px); }
+      .eyebrow { margin-bottom: 22px; letter-spacing: .22em; }
+      .hero-title { font-size: clamp(56px, 16.5vw, 78px); letter-spacing: -.06em; }
+      .hero-subtitle { margin-top: 17px; font-size: clamp(27px, 8.4vw, 38px); }
+      .hero .lead { margin-top: 24px; font-size: 16px; line-height: 1.7; }
+      .hero-actions { margin-top: 28px; }
+      .hero-stage { margin-top: 52px; }
+    }

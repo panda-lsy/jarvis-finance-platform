@@ -1,0 +1,103 @@
+.demo-cursor {
+      position:absolute; left:0; top:0; width:23px; height:29px; pointer-events:none; opacity:0; z-index:20;
+      transform: translate(-50%, -50%); transition: transform .74s cubic-bezier(.16,1,.3,1), opacity .22s ease;
+      background:#f4efe5; clip-path:polygon(0 0,0 100%,7px 77%,12px 94%,17px 92%,12px 75%,23px 75%);
+      filter:drop-shadow(0 2px 0 rgba(0,0,0,.8)) drop-shadow(0 7px 12px rgba(0,0,0,.42));
+    }
+    .demo-cursor.is-pressing { scale:.88; }
+    .demo-click::after {
+      content:''; position:absolute; inset:-3px; border-radius:inherit; border:1px solid rgba(214,185,127,.28);
+      animation: demoPulse .6s ease; pointer-events:none;
+    }
+    .demo-target-ring { position:absolute; pointer-events:none; border-radius:10px; border:1px solid rgba(221,190,126,.35); box-shadow:0 0 0 1px rgba(221,190,126,.06) inset,0 0 22px rgba(201,171,112,.08); opacity:0; transition:opacity .18s ease; z-index:11; }
+    .demo-target-ring.is-visible { opacity:1; }
+    .terminal .workspace { transition:scale .72s cubic-bezier(.16,1,.3,1), translate .72s cubic-bezier(.16,1,.3,1); transform-origin:center; }
+    .terminal.demo-focus-watch .workspace { scale:1.012; translate:8px 0; }
+    .terminal.demo-focus-chart .workspace { scale:1.012; translate:-3px 0; }
+    .terminal.demo-focus-signal .workspace { scale:1.014; translate:-9px 0; }
+    .ai-signal.demo-click { border-color:rgba(201,171,112,.34); box-shadow:0 0 0 1px rgba(201,171,112,.05) inset,0 12px 32px rgba(0,0,0,.25); }
+    .terminal-top, .chart-pane, .watch, .terminal-side { position:relative; }
+    @keyframes demoPulse { from { opacity:.9; transform:scale(.98); } to { opacity:0; transform:scale(1.04); } }
+
+
+    /* --- Full-screen metal candlestick video --- */
+    .kinetic-market {
+      position: relative;
+      height: 118vh;
+      min-height: 860px;
+      overflow: clip;
+      background: #000;
+      border-top: 1px solid rgba(255,255,255,.035);
+      border-bottom: 1px solid rgba(255,255,255,.035);
+      isolation: isolate;
+    }
+    .kinetic-sticky {
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      min-height: 720px;
+      display: grid;
+      place-items: center;
+      overflow: hidden;
+      background: #000;
+    }
+    .kinetic-video-wrap {
+      position: absolute;
+      inset: 0;
+      z-index: 0;
+      overflow: hidden;
+      background: #000;
+    }
+    .kinetic-video {
+      width: 100%;
+      height: 100%;
+      display: block;
+      object-fit: cover;
+      object-position: center center;
+      transform: scale(1.015);
+      filter: brightness(.94) contrast(1.04);
+    }
+
+    .kinetic-candles { position:absolute; inset:0; overflow:hidden; background:#000; }
+    .kinetic-candles i {
+      position:absolute; left:var(--x); top:var(--y); width:86px; height:var(--body);
+      translate:-50% -50%; border-radius:3px;
+      background:linear-gradient(90deg,#111 0%,#777 22%,#f0f0f0 47%,#5b5b5b 70%,#050505 100%);
+      border:1px solid rgba(255,255,255,.24);
+      box-shadow:inset 12px 0 18px rgba(0,0,0,.55),inset -10px 0 15px rgba(0,0,0,.6),0 25px 65px rgba(0,0,0,.65);
+      animation:candleDrift 7.5s var(--delay) ease-in-out infinite alternate;
+    }
+    .kinetic-candles i::before,.kinetic-candles i::after { content:''; position:absolute; left:50%; translate:-50% 0; width:9px; background:linear-gradient(90deg,#181818,#eee 48%,#202020); border-radius:3px; }
+    .kinetic-candles i::before { height:var(--wick); bottom:100%; }
+    .kinetic-candles i::after { height:calc(var(--wick) * .35); top:100%; }
+    @keyframes candleDrift { from { transform:translateY(-9px); filter:brightness(.88); } to { transform:translateY(12px); filter:brightness(1.08); } }
+
+    .kinetic-video-scrim {
+      position: absolute;
+      inset: 0;
+      z-index: 1;
+      pointer-events: none;
+      background:
+        linear-gradient(90deg, rgba(0,0,0,.56) 0%, rgba(0,0,0,.28) 30%, rgba(0,0,0,.06) 55%, transparent 72%),
+        linear-gradient(180deg, rgba(0,0,0,.18), transparent 20%, transparent 72%, rgba(0,0,0,.58)),
+        radial-gradient(ellipse at center, transparent 38%, rgba(0,0,0,.12) 68%, rgba(0,0,0,.40) 100%);
+    }
+    .kinetic-caption {
+      position: absolute;
+      z-index: 20;
+      left: clamp(22px, 4.5vw, 78px);
+      bottom: clamp(24px, 5vw, 64px);
+      max-width: 520px;
+      pointer-events: none;
+      text-shadow: 0 2px 24px rgba(0,0,0,.92), 0 1px 3px rgba(0,0,0,1);
+    }
+    .kinetic-caption .kicker { margin-bottom: 12px; color: rgba(225,196,136,.9); }
+    .kinetic-caption h3 {
+      margin: 0;
+      font-size: clamp(28px, 4vw, 60px);
+      line-height: 1;
+      letter-spacing: -.045em;
+      font-weight: 520;
+      color: rgba(243,241,234,.94);
+    }
+    

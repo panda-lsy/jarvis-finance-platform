@@ -92,18 +92,29 @@ function openSse(base, path, eventName, onEvent, onError) {
 }
 
 async function postSse(base, path, body, onEvent, signal) {
-  const token = await ensureCsrfToken(base)
-  const res = await fetch(`${base}${path}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-XSRF-TOKEN': token,
-      Accept: 'text/event-stream',
-    },
-    credentials: 'include',
-    body: JSON.stringify(body),
-    signal,
-  })
+  let res
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const token = await ensureCsrfToken(base, attempt > 0)
+    res = await fetch(`${base}${path}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-XSRF-TOKEN': token,
+        Accept: 'text/event-stream',
+      },
+      credentials: 'include',
+      body: JSON.stringify(body),
+      signal,
+    })
+    if (attempt === 0 && (res.status === 401 || res.status === 403)) {
+      // Retry only before consuming the stream. This keeps the retry bounded
+      // and lets the browser release the rejected response body first.
+      await res.body?.cancel?.()
+      continue
+    }
+    break
+  }
+
   if (!res.ok) {
     const text = await res.text()
     let message = text || `HTTP ${res.status}`
