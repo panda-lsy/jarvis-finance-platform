@@ -65,10 +65,11 @@ async function request(base, path, options = {}, params = {}) {
       credentials: 'include',
     })
     const data = await res.json().catch(() => ({}))
-    // 安全 Cookie 可能在后续 GET 响应中被浏览器清理；认证请求和幂等的市场偏好替换
-    // 失败时刷新一次 CSRF token，避免把 CSRF 失败误呈现成“未登录”。
-    const csrfRetryable = path.startsWith('/api/auth/') || path === '/api/market/preferences'
-    if (attempt === 0 && csrfRequired && csrfRetryable && (res.status === 401 || res.status === 403)) {
+    // 安全 Cookie 可能在后续 GET 响应中被浏览器清理；且登录成功后服务端会轮换 CSRF token，
+    // 使下一次写请求 401/403。仅当「路径策略允许」且「响应确实来自本服务」时刷新 token 重试一次，
+    // 避免把 CSRF 失败误呈现成“未登录”，也避免把网关/代理的 401 当成 CSRF 失败而重放副作用。
+    if (attempt === 0 && csrfRequired && allowsCsrfRetry(path, options)
+      && hasOwnApiEnvelope(res.status, data)) {
       continue
     }
     return data
@@ -76,7 +77,38 @@ async function request(base, path, options = {}, params = {}) {
 }
 
 function get(base, path, params) { return request(base, path, { method: 'GET' }, params) }
-function post(base, path, body) { return request(base, path, { method: 'POST', body: JSON.stringify(body) }) }
+function post(base, path, body, options = {}) {
+  return request(base, path, { ...options, method: 'POST', body: JSON.stringify(body) })
+}
+
+/**
+ * CSRF 失效后的自动重试策略（默认关闭，必须显式声明）。
+ *
+ * 服务端在登录成功后、以及部分写请求后会轮换 CSRF token，导致下一次写请求 401。
+ * 但重放写请求存在副作用风险（重复下单 / 重复扣配额 / 重复审计），因此：
+ *   ① 默认只对「认证类」与「已知幂等」的写路径开启；
+ *   ② 其它写请求（含 AI 分析类）必须由调用方显式传 `{ csrfRetry: true }`；
+ *   ③ 是否真的重试还要再过一遍 hasOwnApiEnvelope()（见下）；
+ *   ④ 整个请求生命周期最多重试一次。
+ */
+function allowsCsrfRetry(path, options) {
+  if (options?.csrfRetry === false) return false
+  if (options?.csrfRetry === true) return true
+  // 认证类请求本身就是「用凭据换会话」，重放无副作用；市场偏好是整表替换，天然幂等。
+  return path.startsWith('/api/auth/') || path === '/api/market/preferences'
+}
+
+/**
+ * 只有「本服务自己的 API 信封」才允许重试。
+ *
+ * 我们的后端在鉴权/CSRF 失败时返回 `{ code: <HTTP 状态>, message }`（ApiResponse.error）。
+ * 而网关、反向代理、CDN 产生的 401/403 是 HTML 或非信封 JSON —— 那种情况下**服务端可能已经
+ * 执行完了副作用**，重放会造成重复下单/重复扣配额/重复审计，因此一律不重试。
+ */
+function hasOwnApiEnvelope(status, data) {
+  if (status !== 401 && status !== 403) return false
+  return !!data && typeof data === 'object' && data.code === status
+}
 
 function openSse(base, path, eventName, onEvent, onError) {
   const source = new EventSource(`${base}${path}`, { withCredentials: true })
@@ -107,10 +139,15 @@ async function postSse(base, path, body, onEvent, signal) {
       signal,
     })
     if (attempt === 0 && (res.status === 401 || res.status === 403)) {
-      // Retry only before consuming the stream. This keeps the retry bounded
-      // and lets the browser release the rejected response body first.
-      await res.body?.cancel?.()
-      continue
+      // Retry only before consuming the stream, and only when the rejection comes from our
+      // own API envelope: a gateway/proxy 401 may hide an already-executed side effect and
+      // must not be replayed. clone() lets us peek at the body without consuming it.
+      const data = await res.clone().json().catch(() => ({}))
+      if (hasOwnApiEnvelope(res.status, data)) {
+        // 释放被拒响应体，保持重试有界。
+        await res.body?.cancel?.()
+        continue
+      }
     }
     break
   }
@@ -203,18 +240,20 @@ export const api = {
   // 回测: Java 读取/管理数据库并统一计算，浏览器不再直连 Python。
   backtest: (params) => get(API_BASE, '/api/backtest', params),
   // AI: 浏览器只调用 Java；Java 完成 JWT 鉴权后再转发 Python。
+  // 这些分析类写请求不带订单/审计副作用，且服务端在 CSRF 校验失败时不会进入控制器
+  // （不会扣配额），因此显式声明允许一次受控重试——避免登录后第一次分析就报“未登录”。
   aiStatus: () => get(API_BASE, '/api/ai/capabilities'),
-  aiChat: (messages) => post(API_BASE, '/api/ai/chat', { messages }),
+  aiChat: (messages) => post(API_BASE, '/api/ai/chat', { messages }, { csrfRetry: true }),
   aiChatStream: (messages, onEvent, signal) => postSse(
     API_BASE, '/api/ai/chat/stream', { messages }, onEvent, signal,
   ),
-  aiQuote: (priceData) => post(API_BASE, '/api/ai/quote', { price_data: priceData }),
-  aiFinancialReport: (content) => post(API_BASE, '/api/ai/financial/report', { content }),
-  aiChain: (node, context = '') => post(API_BASE, '/api/ai/analyze/chain', { node, context }),
-  aiSentiment: (reports) => post(API_BASE, '/api/ai/analyze/sentiment', { reports }),
+  aiQuote: (priceData) => post(API_BASE, '/api/ai/quote', { price_data: priceData }, { csrfRetry: true }),
+  aiFinancialReport: (content) => post(API_BASE, '/api/ai/financial/report', { content }, { csrfRetry: true }),
+  aiChain: (node, context = '') => post(API_BASE, '/api/ai/analyze/chain', { node, context }, { csrfRetry: true }),
+  aiSentiment: (reports) => post(API_BASE, '/api/ai/analyze/sentiment', { reports }, { csrfRetry: true }),
   aiRisk: (market, confidence = 0.95, portfolioValue = null, days = 60) => post(API_BASE, '/api/ai/analyze/risk', {
     market, confidence, portfolio_value: portfolioValue, days,
-  }),
+  }, { csrfRetry: true }),
 
   // 管理员账户、配额和功能权限
   adminUsers: (query = '', limit = 50) => get(API_BASE, '/api/admin/users', { query, limit }),

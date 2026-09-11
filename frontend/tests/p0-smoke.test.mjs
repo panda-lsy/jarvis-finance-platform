@@ -141,7 +141,12 @@ test('SSE refreshes CSRF once before consuming a rejected response', async () =>
       return { ok: true, status: 200, json: async () => ({ code: 200, data: { token: 'csrf-sse' } }) }
     }
     if (calls.filter(call => call.url.endsWith('/api/ai/chat/stream')).length === 1) {
-      return { ok: false, status: 403, body: { cancel: async () => { cancelled = true } } }
+      return {
+        ok: false,
+        status: 403,
+        clone: () => ({ json: async () => ({ code: 403, message: '未登录或登录已过期' }) }),
+        body: { cancel: async () => { cancelled = true } },
+      }
     }
     return {
       ok: true,
@@ -288,4 +293,123 @@ test('public homepage keeps auth callbacks and animation lifecycle safe', async 
   assert.match(viteConfig, /modulePreload:\s*\{[\s\S]*polyfill:\s*false/)
   assert.match(sessionSource, /restoreRequestId/)
   assert.match(sessionSource, /requestId !== restoreRequestId/)
+})
+
+// ---- CSRF 重试策略：显式声明 + 同源信封校验（见 src/api/client.js）----
+
+function stubFetch(handler) {
+  const calls = []
+  const previousFetch = globalThis.fetch
+  globalThis.fetch = async (url, options = {}) => {
+    const entry = {
+      url: String(url),
+      method: options.method || 'GET',
+      token: options.headers?.['X-XSRF-TOKEN'] || '',
+      body: options.body,
+    }
+    calls.push(entry)
+    return handler(entry, calls)
+  }
+  return { calls, restore: () => { globalThis.fetch = previousFetch } }
+}
+
+// token 逐次变化：这样断言「重试用了新 token」就不依赖模块级 token 缓存状态（会被其它用例预热）
+let csrfIssued = 0
+const csrfResponse = () => {
+  csrfIssued += 1
+  return { ok: true, status: 200, json: async () => ({ code: 200, data: { token: `csrf-${csrfIssued}` } }) }
+}
+const envelope = status => ({ ok: false, status, json: async () => ({ code: status, message: '未登录或登录已过期' }) })
+
+test('AI analysis writes opt in and refresh CSRF once after an envelope 401', async () => {
+  let posts = 0
+  const stub = stubFetch(entry => {
+    if (entry.url.endsWith('/api/auth/csrf')) return csrfResponse()
+    posts += 1
+    if (posts === 1) return envelope(401)
+    return { ok: true, status: 200, json: async () => ({ code: 200, data: { disputes: [] } }) }
+  })
+
+  try {
+    const response = await api.aiSentiment(['研报一'])
+    assert.equal(response.code, 200)
+  } finally {
+    stub.restore()
+  }
+
+  const analysisCalls = stub.calls.filter(call => call.url.endsWith('/api/ai/analyze/sentiment'))
+  assert.equal(analysisCalls.length, 2)
+  // 重试确实换了新取到的 CSRF token，而不是拿旧 token 再打一次
+  assert.notEqual(analysisCalls[1].token, analysisCalls[0].token)
+})
+
+test('gateway-style 401 without our API envelope is never replayed', async () => {
+  let posts = 0
+  const stub = stubFetch(entry => {
+    if (entry.url.endsWith('/api/auth/csrf')) return csrfResponse()
+    posts += 1
+    // 非本服务信封（例如反向代理/网关直接返回的 401）→ 可能已执行完副作用，不得重放
+    return { ok: false, status: 401, json: async () => ({}) }
+  })
+
+  try {
+    const response = await api.aiSentiment(['研报一'])
+    assert.equal(response.code, undefined)
+  } finally {
+    stub.restore()
+  }
+
+  assert.equal(posts, 1)
+})
+
+test('non-idempotent business writes stay single-shot even on an envelope 401', async () => {
+  let orders = 0
+  const stub = stubFetch(entry => {
+    if (entry.url.endsWith('/api/auth/csrf')) return csrfResponse()
+    orders += 1
+    return envelope(401)
+  })
+
+  try {
+    const response = await api.simOrder('BUY', 'AAPL', 1, 1, 'order-1')
+    assert.equal(response.code, 401)
+  } finally {
+    stub.restore()
+  }
+
+  assert.equal(orders, 1)
+})
+
+test('CSRF retry is bounded to a single extra attempt', async () => {
+  let posts = 0
+  const stub = stubFetch(entry => {
+    if (entry.url.endsWith('/api/auth/csrf')) return csrfResponse()
+    posts += 1
+    return envelope(401)
+  })
+
+  try {
+    await api.aiChain('黄金')
+  } finally {
+    stub.restore()
+  }
+
+  assert.equal(posts, 2)
+})
+
+test('SSE does not replay a gateway-style rejection', async () => {
+  let streamPosts = 0
+  const stub = stubFetch(entry => {
+    if (entry.url.endsWith('/api/auth/csrf')) return csrfResponse()
+    streamPosts += 1
+    return { ok: false, status: 401, clone: () => ({ json: async () => ({}) }) }
+  })
+
+  try {
+    await assert.rejects(() => api.aiChatStream([{ role: 'user', content: 'hi' }], () => {}))
+  } finally {
+    stub.restore()
+  }
+
+  assert.equal(streamPosts, 1)
 })
