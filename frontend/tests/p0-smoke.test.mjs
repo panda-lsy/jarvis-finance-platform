@@ -226,6 +226,8 @@ test('public homepage keeps auth callbacks and animation lifecycle safe', async 
   assert.match(landingDocument, /revealHeroFallback/)
   assert.match(landingDocument, /addEventListener\('error', revealHeroFallback\)/)
   assert.match(landingDocument, /playback\.catch\(revealHeroFallback\)/)
+  const viteConfig = await readFile(join(frontendRoot, 'vite.config.js'), 'utf8')
+  assert.match(viteConfig, /modulePreload:\s*\{[\s\S]*polyfill:\s*false/)
   assert.match(sessionSource, /restoreRequestId/)
   assert.match(sessionSource, /requestId !== restoreRequestId/)
 })
