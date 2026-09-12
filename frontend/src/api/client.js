@@ -222,9 +222,21 @@ export const api = {
   // 模拟盘 (需登录)
   simAccount: () => get(API_BASE, '/api/sim/account'),
   simTrades: (limit) => get(API_BASE, '/api/sim/trades', { limit }),
-  simOrder: (type, symbol, quantity, leverage, clientOrderId) => post(API_BASE, '/api/sim/order', {
-    type, symbol, quantity, leverage: leverage || 1, clientOrderId,
+  simOrder: (type, symbol, quantity, leverage, clientOrderId, options = {}) => post(API_BASE, '/api/sim/order', {
+    type,
+    symbol,
+    quantity,
+    leverage: leverage || 1,
+    clientOrderId,
+    orderType: options.orderType || 'MARKET',
+    stopPrice: options.stopPrice,
+    timeInForce: options.timeInForce || 'DAY',
   }),
+  simOpenOrders: () => get(API_BASE, '/api/sim/orders/open'),
+  simUpdateOrder: (orderId, stopPrice) => request(API_BASE, `/api/sim/orders/${orderId}`, {
+    method: 'PATCH', body: JSON.stringify({ stopPrice }),
+  }),
+  simCancelOrder: (orderId) => request(API_BASE, `/api/sim/orders/${orderId}`, { method: 'DELETE' }),
   // 市场数据 (Java 主管数据存储: 实时价格 + K线)
   marketPrices: () => get(API_BASE, '/api/market/prices'),
   marketPriceStream: (onEvent, onError) => openSse(

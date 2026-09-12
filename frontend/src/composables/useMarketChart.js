@@ -29,6 +29,13 @@ export function useMarketChart() {
       visibleCount = 60,
       overlays = [],
       dateFormatter = compactDate,
+      riseColor = PRICE_UP,
+      fallColor = PRICE_DOWN,
+      showLegend = true,
+      showSlider = true,
+      xLabelsOnVolume = false,
+      gridColor = GRID,
+      axisColor = AXIS,
     } = options
 
     const dates = rows.map(item => item.date)
@@ -47,7 +54,13 @@ export function useMarketChart() {
       data: dates,
       boundaryGap: true,
       axisTick: { show: false },
-      axisLabel: { color: AXIS, fontSize: 10, hideOverlap: true, formatter: dateFormatter },
+      axisLabel: {
+        show: !withVolume || !xLabelsOnVolume,
+        color: axisColor,
+        fontSize: 10,
+        hideOverlap: true,
+        formatter: dateFormatter,
+      },
       axisLine: { lineStyle: { color: LINE } },
     }
     const mainYAxis = {
@@ -55,8 +68,8 @@ export function useMarketChart() {
       position: 'right',
       axisTick: { show: false },
       axisLine: { show: false },
-      axisLabel: { color: AXIS, fontSize: 10 },
-      splitLine: { lineStyle: { color: GRID } },
+      axisLabel: { color: axisColor, fontSize: 10 },
+      splitLine: { lineStyle: { color: gridColor } },
     }
 
     const overlaySeries = overlays.map(item => ({
@@ -72,6 +85,26 @@ export function useMarketChart() {
     if (withVolume) legendData.push('成交量')
     legendData.push(...overlays.map(item => item.name))
 
+    const dataZoom = [
+      { type: 'inside', xAxisIndex: zoomXAxis, startValue: startIndex, endValue: lastIndex, minValueSpan: 8 },
+    ]
+    if (showSlider) {
+      dataZoom.push({
+        type: 'slider',
+        xAxisIndex: zoomXAxis,
+        startValue: startIndex,
+        endValue: lastIndex,
+        minValueSpan: 8,
+        height: 14,
+        bottom: 5,
+        borderColor: '#30343a',
+        backgroundColor: '#151719',
+        fillerColor: 'rgba(201,166,95,.16)',
+        handleSize: 10,
+        textStyle: { color: '#73787d', fontSize: 9 },
+      })
+    }
+
     return chart.setOption({
       animation: false,
       backgroundColor: 'transparent',
@@ -83,19 +116,20 @@ export function useMarketChart() {
         textStyle: { color: '#f1efe8', fontSize: 11 },
       },
       legend: {
+        show: showLegend,
         top: 2,
         left: 10,
         itemWidth: 12,
         itemHeight: 6,
-        textStyle: { color: AXIS, fontSize: 10 },
+        textStyle: { color: axisColor, fontSize: 10 },
         data: legendData,
       },
       grid: withVolume
         ? [
-            { left: 12, right: 62, top: 30, height: '61%' },
-            { left: 12, right: 62, top: '76%', height: '11%' },
+            { left: 12, right: 64, top: showLegend ? 30 : 12, height: xLabelsOnVolume ? '66%' : '61%' },
+            { left: 12, right: 64, top: xLabelsOnVolume ? '79%' : '76%', height: xLabelsOnVolume ? '12%' : '11%' },
           ]
-        : { left: 12, right: 62, top: 30, bottom: 46 },
+        : { left: 12, right: 64, top: showLegend ? 30 : 12, bottom: showSlider ? 46 : 24 },
       xAxis: withVolume
         ? [
             mainXAxis,
@@ -103,9 +137,16 @@ export function useMarketChart() {
               type: 'category',
               gridIndex: 1,
               data: dates,
-              axisLabel: { show: false },
+              boundaryGap: true,
+              axisLabel: {
+                show: xLabelsOnVolume,
+                color: axisColor,
+                fontSize: 10,
+                hideOverlap: true,
+                formatter: dateFormatter,
+              },
               axisTick: { show: false },
-              axisLine: { show: false },
+              axisLine: { show: xLabelsOnVolume, lineStyle: { color: LINE } },
             },
           ]
         : mainXAxis,
@@ -122,29 +163,13 @@ export function useMarketChart() {
             },
           ]
         : mainYAxis,
-      dataZoom: [
-        { type: 'inside', xAxisIndex: zoomXAxis, startValue: startIndex, endValue: lastIndex, minValueSpan: 8 },
-        {
-          type: 'slider',
-          xAxisIndex: zoomXAxis,
-          startValue: startIndex,
-          endValue: lastIndex,
-          minValueSpan: 8,
-          height: 14,
-          bottom: 5,
-          borderColor: '#30343a',
-          backgroundColor: '#151719',
-          fillerColor: 'rgba(201,166,95,.16)',
-          handleSize: 10,
-          textStyle: { color: '#73787d', fontSize: 9 },
-        },
-      ],
+      dataZoom,
       series: [
         {
           name: 'K线',
           type: 'candlestick',
           data: ohlc,
-          itemStyle: { color: PRICE_UP, color0: PRICE_DOWN, borderColor: PRICE_UP, borderColor0: PRICE_DOWN },
+          itemStyle: { color: riseColor, color0: fallColor, borderColor: riseColor, borderColor0: fallColor },
         },
         ...(withVolume ? [{
           name: '成交量',
@@ -152,7 +177,7 @@ export function useMarketChart() {
           xAxisIndex: 1,
           yAxisIndex: 1,
           data: volumes,
-          itemStyle: { color: params => params.data[2] > 0 ? PRICE_UP : PRICE_DOWN },
+          itemStyle: { color: params => params.data[2] > 0 ? riseColor : fallColor },
         }] : []),
         ...overlaySeries,
       ],
