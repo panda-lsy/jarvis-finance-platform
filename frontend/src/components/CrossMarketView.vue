@@ -1,5 +1,5 @@
 <script setup>
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { api } from '../api/client'
 import InstrumentList from './market/InstrumentList.vue'
 import DataState from './common/DataState.vue'
@@ -21,8 +21,9 @@ import {
 
 const props = defineProps({
   user: { type: Object, default: null },
+  active: { type: Boolean, default: true },
 })
-const emit = defineEmits(['context-change'])
+const emit = defineEmits(['context-change', 'ready'])
 
 const market = ref('a_share')
 const selectedSymbol = ref('')
@@ -56,6 +57,8 @@ const chartRef = marketChart.elementRef
 let lastDailyRefreshAt = 0
 let preferenceSaveChain = Promise.resolve()
 let preferenceSaveVersion = 0
+let bootstrapping = true
+let readyEmitted = false
 // 报价与 K 线解耦：报价 1 秒刷新，K 线/交易时段维持低频刷新，避免每秒请求重型历史接口。
 const quotePolling = usePolling(async () => {
   const shouldWatch = market.value === 'crypto' || session.value?.is_open
@@ -417,6 +420,7 @@ watch(market, async () => {
   chooseDefaultSymbol()
   analysis.value = ''
   technicalAnalysis.value = null
+  if (bootstrapping) return
   await loadSession()
   loadData()
 })
@@ -433,14 +437,49 @@ watch(currentInstrument, item => {
 watch([selectedSymbol, interval], () => {
   analysis.value = ''
   resetSelectedData()
+  if (bootstrapping) return
   loadData()
 })
 
 onMounted(async () => {
-  await loadPreferences()
-  await refresh()
-  quotePolling.start()
-  maintenancePolling.start()
+  try {
+    await marketChart.prepare()
+    await loadPreferences()
+    await refresh()
+  } finally {
+    bootstrapping = false
+    if (props.active) {
+      quotePolling.start()
+      maintenancePolling.start()
+    }
+    await nextTick()
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        marketChart.resize()
+        if (!readyEmitted) {
+          readyEmitted = true
+          emit('ready')
+        }
+      })
+    })
+  }
+})
+
+watch(() => props.active, active => {
+  if (bootstrapping) return
+  if (active) {
+    quotePolling.start()
+    maintenancePolling.start()
+    requestAnimationFrame(() => marketChart.resize())
+  } else {
+    quotePolling.stop()
+    maintenancePolling.stop()
+  }
+})
+
+onBeforeUnmount(() => {
+  quotePolling.stop()
+  maintenancePolling.stop()
 })
 </script>
 

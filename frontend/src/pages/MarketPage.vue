@@ -10,7 +10,7 @@ import { useFreshness } from '../composables/useFreshness'
 import { formatNumber, formatPercent } from '../utils/formatters'
 
 const props = defineProps({ active: { type: Boolean, default: true } })
-const emit = defineEmits(['connection-change', 'context-change'])
+const emit = defineEmits(['connection-change', 'context-change', 'ready'])
 
 const connected = ref(false)
 const initializing = ref(true)
@@ -254,6 +254,22 @@ async function initialize() {
   }
 }
 
+async function initializeMountedWorkspace() {
+  // Initialize the ECharts canvas before the archive-to-workspace crossfade.
+  // The workspace is pre-mounted at opacity 0, so module parsing, canvas setup
+  // and the first chart allocation happen off-screen instead of on the first
+  // visible MARKET frame.
+  await marketChart.prepare()
+  await initialize()
+  await nextTick()
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      marketChart.resize()
+      emit('ready')
+    })
+  })
+}
+
 watch(() => props.active, async active => {
   if (active) {
     poll.start()
@@ -266,7 +282,7 @@ watch(() => props.active, async active => {
   }
 }, { immediate: true })
 
-onMounted(initialize)
+onMounted(initializeMountedWorkspace)
 onBeforeUnmount(stopPriceStream)
 
 watch([marketFocus, () => jdKlineCfg.market], () => {

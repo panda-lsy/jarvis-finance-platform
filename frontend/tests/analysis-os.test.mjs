@@ -20,6 +20,7 @@ test('analysis OS is the authenticated workspace entry without replacing existin
   assert.match(tabs, /'模拟盘'/)
   assert.match(tabs, /'研究助手'/)
   assert.match(app, /AnalysisOsPage/)
+  assert.match(app, /v-show="activeTab === '研究终端' \|\| archiveHandoffHold"/)
   assert.match(app, /:active="activeTab === '研究终端'"/)
   assert.match(app, /@navigate="navigateWorkspace"/)
   assert.match(app, /:requested-module-key="archiveModuleKey"/)

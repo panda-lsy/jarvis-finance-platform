@@ -7,6 +7,29 @@
     <link rel="apple-touch-icon" href="/favicon-192.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>贾维斯 · 金融投研平台</title>
+    <script>
+      ;(() => {
+        const THEME_KEY = 'jarvis-theme'
+        const LEGACY_THEME_KEY = 'jarvis-ui-night-mode'
+        let theme = 'day'
+        try {
+          const savedTheme = window.localStorage.getItem(THEME_KEY)
+          if (savedTheme === 'day' || savedTheme === 'night') {
+            theme = savedTheme
+          } else {
+            const legacyNightMode = window.localStorage.getItem(LEGACY_THEME_KEY)
+            if (legacyNightMode === 'true' || legacyNightMode === 'false') {
+              theme = legacyNightMode === 'true' ? 'night' : 'day'
+              window.localStorage.setItem(THEME_KEY, theme)
+            }
+          }
+        } catch (_) {
+          // Storage can be unavailable in hardened/private contexts. The
+          // archive still receives a deterministic day theme for first paint.
+        }
+        document.documentElement.dataset.theme = theme
+      })()
+    </script>
   </head>
   <body>
     <div id="app"></div>

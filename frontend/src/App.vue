@@ -1,5 +1,5 @@
 <script setup>
-import { computed, defineAsyncComponent, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { api } from './api/client'
 import LoginView from './components/LoginView.vue'
 import AppHeader from './components/common/AppHeader.vue'
@@ -13,42 +13,87 @@ import { useResearchContext } from './analysis-os/state/researchContext'
 import { useWorkflowHandoff } from './analysis-os/state/workflowHandoff'
 
 const AnalysisOsPage = defineAsyncComponent(() => import('./pages/AnalysisOsPage.vue'))
-const MarketPage = defineAsyncComponent(() => import('./pages/MarketPage.vue'))
-const BacktestPage = defineAsyncComponent(() => import('./pages/BacktestPage.vue'))
-const CrossMarketView = defineAsyncComponent(() => import('./components/CrossMarketView.vue'))
-const SimTradeView = defineAsyncComponent(() => import('./components/SimTradeView.vue'))
-const AiCenter = defineAsyncComponent(() => import('./components/AiCenter.vue'))
-const SentimentPage = defineAsyncComponent(() => import('./pages/SentimentPage.vue'))
-const FinancialReportPage = defineAsyncComponent(() => import('./pages/FinancialReportPage.vue'))
-const ChainPage = defineAsyncComponent(() => import('./pages/ChainPage.vue'))
-const RiskPage = defineAsyncComponent(() => import('./pages/RiskPage.vue'))
-const StrategyPage = defineAsyncComponent(() => import('./pages/StrategyPage.vue'))
-const QuotePage = defineAsyncComponent(() => import('./pages/QuotePage.vue'))
-const TrendPage = defineAsyncComponent(() => import('./pages/TrendPage.vue'))
-const OpsView = defineAsyncComponent(() => import('./components/OpsView.vue'))
+const workspaceLoaders = Object.freeze({
+  '行情': () => import('./pages/MarketPage.vue'),
+  '多市场': () => import('./components/CrossMarketView.vue'),
+  '回测': () => import('./pages/BacktestPage.vue'),
+  '模拟盘': () => import('./components/SimTradeView.vue'),
+  '研究助手': () => import('./components/AiCenter.vue'),
+  '多空研报': () => import('./pages/SentimentPage.vue'),
+  '财报解析': () => import('./pages/FinancialReportPage.vue'),
+  '产业链图谱': () => import('./pages/ChainPage.vue'),
+  '风险预警': () => import('./pages/RiskPage.vue'),
+  '智能报价': () => import('./pages/QuotePage.vue'),
+  '策略生成': () => import('./pages/StrategyPage.vue'),
+  '运维': () => import('./components/OpsView.vue'),
+  '市场趋势预测': () => import('./pages/TrendPage.vue'),
+})
+const MarketPage = defineAsyncComponent(workspaceLoaders['行情'])
+const BacktestPage = defineAsyncComponent(workspaceLoaders['回测'])
+const CrossMarketView = defineAsyncComponent(workspaceLoaders['多市场'])
+const SimTradeView = defineAsyncComponent(workspaceLoaders['模拟盘'])
+const AiCenter = defineAsyncComponent(workspaceLoaders['研究助手'])
+const SentimentPage = defineAsyncComponent(workspaceLoaders['多空研报'])
+const FinancialReportPage = defineAsyncComponent(workspaceLoaders['财报解析'])
+const ChainPage = defineAsyncComponent(workspaceLoaders['产业链图谱'])
+const RiskPage = defineAsyncComponent(workspaceLoaders['风险预警'])
+const StrategyPage = defineAsyncComponent(workspaceLoaders['策略生成'])
+const QuotePage = defineAsyncComponent(workspaceLoaders['智能报价'])
+const TrendPage = defineAsyncComponent(workspaceLoaders['市场趋势预测'])
+const OpsView = defineAsyncComponent(workspaceLoaders['运维'])
 const AdminView = defineAsyncComponent(() => import('./components/AdminView.vue'))
+const workspacePreloads = new Map()
+const preparedWorkspaceRoute = ref('')
+const archiveHandoffHold = ref(false)
+const workspaceRevealReady = ref(true)
+let archiveHandoffTimer = 0
+
+const workspaceWarmers = Object.freeze({
+  '行情': () => import('./charts/echarts'),
+  '多市场': () => import('./charts/echarts'),
+  '回测': () => import('./charts/echarts'),
+  '模拟盘': () => import('./charts/echarts'),
+})
 
 const session = useAuthSession()
 const { user: sessionUser, isLoggedIn: sessionLoggedIn, sessionState } = session
 const previewMode = ref(false)
-const NIGHT_MODE_KEY = 'jarvis-ui-night-mode'
+const THEME_MODE_KEY = 'jarvis-theme'
+const LEGACY_NIGHT_MODE_KEY = 'jarvis-ui-night-mode'
 function readNightModePreference() {
   try {
-    return window.localStorage.getItem(NIGHT_MODE_KEY) === 'true'
+    const storedTheme = window.localStorage.getItem(THEME_MODE_KEY)
+    if (storedTheme === 'night') return true
+    if (storedTheme === 'day') return false
+
+    const legacyNightMode = window.localStorage.getItem(LEGACY_NIGHT_MODE_KEY)
+    if (legacyNightMode === 'true' || legacyNightMode === 'false') {
+      const migratedTheme = legacyNightMode === 'true' ? 'night' : 'day'
+      window.localStorage.setItem(THEME_MODE_KEY, migratedTheme)
+      return migratedTheme === 'night'
+    }
   } catch (_) {
-    return false
+    // Fall through to the first-paint theme applied by index.html.
   }
+  return document.documentElement.dataset.theme === 'night'
 }
 const nightMode = ref(readNightModePreference())
 
-function toggleNightMode() {
-  nightMode.value = !nightMode.value
+function applyThemePreference(value) {
+  const theme = value ? 'night' : 'day'
+  document.documentElement.dataset.theme = theme
   try {
-    window.localStorage.setItem(NIGHT_MODE_KEY, String(nightMode.value))
+    window.localStorage.setItem(THEME_MODE_KEY, theme)
   } catch (_) {
     // 当前会话仍可切换主题；存储受限时不阻塞界面。
   }
 }
+
+function toggleNightMode() {
+  nightMode.value = !nightMode.value
+  applyThemePreference(nightMode.value)
+}
+applyThemePreference(nightMode.value)
 
 const LOCAL_PREVIEW_USER = Object.freeze({
   id: -1,
@@ -63,6 +108,12 @@ const workspace = useWorkspaceTabs(user)
 const { activeTab, visitedTabs, tabs, switchTab } = workspace
 const publicView = ref('landing')
 const activeModule = computed(() => JARVIS_MODULES.find(module => module.routeKey === activeTab.value) || null)
+const preparedModule = computed(() => (
+  activeModule.value
+  || JARVIS_MODULES.find(module => module.routeKey === preparedWorkspaceRoute.value)
+  || null
+))
+const workspaceRenderRoute = computed(() => activeModule.value?.routeKey || preparedWorkspaceRoute.value)
 const archiveModuleKey = ref('market')
 const research = useResearchContext()
 const { context: researchContext, setContext: setResearchContext, clearContext: clearResearchContext } = research
@@ -127,10 +178,97 @@ function syncArchiveModule(key) {
   if (JARVIS_MODULES.some(module => module.key === key)) archiveModuleKey.value = key
 }
 
+function waitForTwoPaints() {
+  if (typeof window === 'undefined') return Promise.resolve()
+  return new Promise(resolve => {
+    requestAnimationFrame(() => requestAnimationFrame(resolve))
+  })
+}
+
+function preloadWorkspace(routeKey, priority = 'idle') {
+  const loader = workspaceLoaders[routeKey]
+  if (!loader) return Promise.resolve(false)
+
+  const existing = workspacePreloads.get(routeKey)
+  if (existing) {
+    if (priority === 'immediate') {
+      existing.start()
+      return existing.promise
+    }
+    return existing.promise
+  }
+
+  let started = false
+  let idleHandle = 0
+  let resolvePromise
+  const promise = new Promise(resolve => { resolvePromise = resolve })
+  const start = () => {
+    if (started) return
+    started = true
+    if (idleHandle && typeof window !== 'undefined' && typeof window.cancelIdleCallback === 'function') {
+      window.cancelIdleCallback(idleHandle)
+    }
+    const warmer = workspaceWarmers[routeKey]
+    Promise.all([
+      Promise.resolve(loader()),
+      warmer ? Promise.resolve(warmer()) : Promise.resolve(),
+    ])
+      .then(() => {
+        resolvePromise(true)
+      })
+      .catch(() => {
+        workspacePreloads.delete(routeKey)
+        resolvePromise(false)
+      })
+  }
+
+  const entry = { promise, start }
+  workspacePreloads.set(routeKey, entry)
+
+  if (priority === 'immediate' || typeof window === 'undefined') {
+    start()
+  } else if (typeof window.requestIdleCallback === 'function') {
+    // Warm the focused workspace only when the browser is genuinely idle. Do
+    // not force a timeout while the archive is moving: that would move chunk
+    // parse/layout work back into the animation path we are trying to protect.
+    idleHandle = window.requestIdleCallback(start)
+  } else {
+    idleHandle = window.setTimeout(start, 480)
+  }
+
+  return promise
+}
+
 function navigateWorkspace(routeKey) {
+  const fromArchive = activeTab.value === '研究终端'
   const module = JARVIS_MODULES.find(item => item.routeKey === routeKey)
-  if (module) archiveModuleKey.value = module.key
+  if (module) {
+    archiveModuleKey.value = module.key
+    preparedWorkspaceRoute.value = routeKey
+  }
+  if (archiveHandoffTimer) window.clearTimeout(archiveHandoffTimer)
+  archiveHandoffTimer = 0
+  archiveHandoffHold.value = fromArchive
+  workspaceRevealReady.value = !fromArchive
   switchTab(routeKey)
+
+  if (fromArchive && !['行情', '多市场'].includes(routeKey)) {
+    nextTick(async () => {
+      await waitForTwoPaints()
+      handleWorkspaceReady(routeKey)
+    })
+  }
+}
+
+async function handleWorkspaceReady(routeKey = activeTab.value) {
+  if (routeKey !== activeTab.value || activeTab.value === '研究终端') return
+  await waitForTwoPaints()
+  workspaceRevealReady.value = true
+  if (archiveHandoffTimer) window.clearTimeout(archiveHandoffTimer)
+  archiveHandoffTimer = window.setTimeout(() => {
+    archiveHandoffTimer = 0
+    archiveHandoffHold.value = false
+  }, 320)
 }
 
 function openLegacyAdmin() {
@@ -140,6 +278,10 @@ function openLegacyAdmin() {
 
 function returnToArchive() {
   if (activeModule.value) archiveModuleKey.value = activeModule.value.key
+  if (archiveHandoffTimer) window.clearTimeout(archiveHandoffTimer)
+  archiveHandoffTimer = 0
+  archiveHandoffHold.value = false
+  workspaceRevealReady.value = true
   switchTab('研究终端')
 }
 
@@ -178,6 +320,11 @@ onMounted(() => {
   // 等 LoginView 读取完 OAuth 结果后再清理地址栏，避免返回官网后重复显示旧错误。
   if (hasOAuthResult) nextTick(clearOAuthQuery)
 })
+
+onBeforeUnmount(() => {
+  if (archiveHandoffTimer) window.clearTimeout(archiveHandoffTimer)
+  archiveHandoffHold.value = false
+})
 </script>
 
 <template>
@@ -202,16 +349,21 @@ onMounted(() => {
 
     <AnalysisOsPage
       v-if="visitedTabs.has('研究终端')"
-      v-show="activeTab === '研究终端'"
+      v-show="activeTab === '研究终端' || archiveHandoffHold"
       :active="activeTab === '研究终端'"
+      :night-mode="nightMode"
       :requested-module-key="archiveModuleKey"
+      :workspace-preload="preloadWorkspace"
       @focus-change="syncArchiveModule"
       @navigate="navigateWorkspace"
+      @toggle-night-mode="toggleNightMode"
     />
 
     <ArchiveWorkspaceShell
-      v-if="activeModule"
-      :module="activeModule"
+      v-if="preparedModule"
+      :module="preparedModule"
+      :active="Boolean(activeModule)"
+      :revealed="workspaceRevealReady"
       :modules="JARVIS_MODULES"
       :user="user"
       :context="researchContext"
@@ -223,36 +375,46 @@ onMounted(() => {
       @update-profile="updateProfile"
       @toggle-night-mode="toggleNightMode"
     >
-      <MarketPage v-if="activeTab === '行情'" :active="true" @context-change="setResearchContext" />
+          <MarketPage
+            v-if="workspaceRenderRoute === '行情'"
+            :active="activeTab === '行情' && workspaceRevealReady"
+            @context-change="setResearchContext"
+            @ready="handleWorkspaceReady('行情')"
+          />
 
-      <section v-else-if="activeTab === '多市场'" class="panel-wrap">
-        <CrossMarketView :user="user" @context-change="setResearchContext" />
-      </section>
+          <section v-else-if="workspaceRenderRoute === '多市场'" class="panel-wrap">
+            <CrossMarketView
+              :user="user"
+              :active="activeTab === '多市场' && workspaceRevealReady"
+              @context-change="setResearchContext"
+              @ready="handleWorkspaceReady('多市场')"
+            />
+          </section>
 
       <BacktestPage
-        v-else-if="activeTab === '回测'"
-        :active="true"
+        v-else-if="workspaceRenderRoute === '回测'"
+        :active="activeTab === '回测'"
         :handoff="backtestHandoff"
         @clear-handoff="clearBacktestHandoff"
       />
 
-      <section v-else-if="activeTab === '模拟盘'">
+      <section v-else-if="workspaceRenderRoute === '模拟盘'">
         <SimTradeView :user="user" @context-change="setResearchContext" />
       </section>
 
-      <section v-else-if="activeTab === '研究助手'" class="panel-wrap">
+      <section v-else-if="workspaceRenderRoute === '研究助手'" class="panel-wrap">
         <AiCenter :research-context="researchContext" />
       </section>
 
-      <QuotePage v-else-if="activeTab === '智能报价'" />
-      <SentimentPage v-else-if="activeTab === '多空研报'" />
-      <FinancialReportPage v-else-if="activeTab === '财报解析'" :research-context="researchContext" />
-      <ChainPage v-else-if="activeTab === '产业链图谱'" :research-context="researchContext" />
-      <RiskPage v-else-if="activeTab === '风险预警'" :research-context="researchContext" />
-      <StrategyPage v-else-if="activeTab === '策略生成'" @send-backtest="sendStrategyToBacktest" />
-      <TrendPage v-else-if="activeTab === '市场趋势预测'" />
+      <QuotePage v-else-if="workspaceRenderRoute === '智能报价'" />
+      <SentimentPage v-else-if="workspaceRenderRoute === '多空研报'" />
+      <FinancialReportPage v-else-if="workspaceRenderRoute === '财报解析'" :research-context="researchContext" />
+      <ChainPage v-else-if="workspaceRenderRoute === '产业链图谱'" :research-context="researchContext" />
+      <RiskPage v-else-if="workspaceRenderRoute === '风险预警'" :research-context="researchContext" />
+      <StrategyPage v-else-if="workspaceRenderRoute === '策略生成'" @send-backtest="sendStrategyToBacktest" />
+      <TrendPage v-else-if="workspaceRenderRoute === '市场趋势预测'" />
 
-      <section v-else-if="activeTab === '运维'" class="panel-wrap">
+      <section v-else-if="workspaceRenderRoute === '运维'" class="panel-wrap">
         <OpsView />
       </section>
     </ArchiveWorkspaceShell>

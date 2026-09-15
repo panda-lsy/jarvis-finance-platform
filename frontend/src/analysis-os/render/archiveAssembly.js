@@ -17,6 +17,64 @@ function shadow(mesh, cast = true, receive = true) {
   return mesh
 }
 
+export const ARCHIVE_RENDER_THEMES = Object.freeze({
+  day: Object.freeze({
+    body: Object.freeze({ color: '#f7f2eb', roughness: 0.36, metalness: 0.04, emissive: '#000000', emissiveIntensity: 0 }),
+    inset: Object.freeze({ color: '#fcf8f2', roughness: 0.46, metalness: 0.02, emissive: '#000000', emissiveIntensity: 0 }),
+    frame: Object.freeze({ color: '#c9bcad', roughness: 0.54, metalness: 0.08, emissive: '#000000', emissiveIntensity: 0 }),
+    rail: Object.freeze({ color: '#d2c5b6', roughness: 0.40, metalness: 0.16 }),
+    inner: Object.freeze({ color: '#666860', roughness: 0.34, metalness: 0.16 }),
+    accent: Object.freeze({ color: '#92764d', roughness: 0.28, metalness: 0.34, emissive: '#000000', emissiveIntensity: 0 }),
+    focusFrame: Object.freeze({ color: '#bca578', roughness: 0.42, metalness: 0.18, emissive: '#000000', emissiveIntensity: 0 }),
+    focusAccent: Object.freeze({ color: '#92764d', roughness: 0.28, metalness: 0.34, emissive: '#000000', emissiveIntensity: 0 }),
+    focusMetal: Object.freeze({ color: '#c9bcad', roughness: 0.48, metalness: 0.14, emissive: '#000000', emissiveIntensity: 0 }),
+    labelCarrier: Object.freeze({ color: '#f8f3ec', roughness: 0.54, metalness: 0.02 }),
+    glass: Object.freeze({ color: '#fffdfa', roughness: 0.21, transmission: 0.68, opacity: 0.92 }),
+    decrypt: Object.freeze({ color: '#9b7d52', emissive: '#6c5434', emissiveIntensity: 0.18 }),
+    gasket: Object.freeze({ color: '#4c4c47', opacity: 0.72 }),
+    focusedGlass: Object.freeze({ color: '#ece9e2', roughness: 0.42, transmission: 0.36, opacity: 0.98 }),
+  }),
+  night: Object.freeze({
+    // Midnight Atelier: ordinary archives are almost monochrome graphite.
+    // Champagne metal appears only on the active file, so material hierarchy
+    // carries the premium look instead of a scene-wide glow.
+    body: Object.freeze({ color: '#33373a', roughness: 0.61, metalness: 0.018, emissive: '#000000', emissiveIntensity: 0 }),
+    inset: Object.freeze({ color: '#292d30', roughness: 0.65, metalness: 0.012, emissive: '#000000', emissiveIntensity: 0 }),
+    frame: Object.freeze({ color: '#514c45', roughness: 0.59, metalness: 0.08, emissive: '#000000', emissiveIntensity: 0 }),
+    rail: Object.freeze({ color: '#474844', roughness: 0.53, metalness: 0.11 }),
+    inner: Object.freeze({ color: '#707476', roughness: 0.46, metalness: 0.07 }),
+    // Identity hardware only appears on the focused file. Lift it modestly so
+    // focus reads immediately without raising the exposure of the archive sea.
+    accent: Object.freeze({ color: '#927d5b', roughness: 0.37, metalness: 0.22, emissive: '#2b2014', emissiveIntensity: 0.055 }),
+    focusFrame: Object.freeze({ color: '#c2a777', roughness: 0.33, metalness: 0.32, emissive: '#49341d', emissiveIntensity: 0.085 }),
+    focusAccent: Object.freeze({ color: '#d9bd87', roughness: 0.24, metalness: 0.38, emissive: '#5a4022', emissiveIntensity: 0.145 }),
+    focusMetal: Object.freeze({ color: '#9f9077', roughness: 0.36, metalness: 0.26, emissive: '#2b2218', emissiveIntensity: 0.045 }),
+    labelCarrier: Object.freeze({ color: '#394045', roughness: 0.58, metalness: 0.018 }),
+    glass: Object.freeze({ color: '#666c6f', roughness: 0.41, transmission: 0.21, opacity: 0.90 }),
+    decrypt: Object.freeze({ color: '#c9ac78', emissive: '#4e3b24', emissiveIntensity: 0.095 }),
+    gasket: Object.freeze({ color: '#111416', opacity: 0.74 }),
+    focusedGlass: Object.freeze({ color: '#454e53', roughness: 0.41, transmission: 0.20, opacity: 0.975 }),
+  }),
+})
+
+function applyMaterialTheme(material, values) {
+  if (!material || !values) return
+  if (values.color && material.color) material.color.set(values.color)
+  if (values.emissive && material.emissive) material.emissive.set(values.emissive)
+  for (const key of ['roughness', 'metalness', 'transmission', 'opacity', 'emissiveIntensity']) {
+    if (Number.isFinite(values[key]) && key in material) material[key] = values[key]
+  }
+}
+
+export function applyArchiveTheme(library, mode = 'day', focusedGlassMaterial = null) {
+  if (!library?.materials) return
+  const theme = ARCHIVE_RENDER_THEMES[mode] || ARCHIVE_RENDER_THEMES.day
+  for (const key of ['body', 'inset', 'frame', 'rail', 'inner', 'accent', 'focusFrame', 'focusAccent', 'focusMetal', 'labelCarrier', 'glass', 'decrypt', 'gasket']) {
+    applyMaterialTheme(library.materials[key], theme[key])
+  }
+  applyMaterialTheme(focusedGlassMaterial, theme.focusedGlass)
+}
+
 export function createArchiveAssetLibrary() {
   const geometries = {
     body: new RoundedBoxGeometry(5.00, 3.70, 0.31, 3, 0.075),
@@ -52,6 +110,9 @@ export function createArchiveAssetLibrary() {
     rail: new MeshStandardMaterial({ color: new Color('#d2c5b6'), roughness: 0.4, metalness: 0.16 }),
     inner: new MeshStandardMaterial({ color: new Color('#666860'), roughness: 0.34, metalness: 0.16 }),
     accent: new MeshStandardMaterial({ color: new Color('#92764d'), roughness: 0.28, metalness: 0.34 }),
+    focusFrame: new MeshStandardMaterial({ color: new Color('#bca578'), roughness: 0.42, metalness: 0.18 }),
+    focusAccent: new MeshStandardMaterial({ color: new Color('#92764d'), roughness: 0.28, metalness: 0.34 }),
+    focusMetal: new MeshStandardMaterial({ color: new Color('#c9bcad'), roughness: 0.48, metalness: 0.14 }),
     labelCarrier: new MeshStandardMaterial({ color: new Color('#f8f3ec'), roughness: 0.54, metalness: 0.02 }),
     glass: new MeshPhysicalMaterial({
       color: new Color('#fffdfa'),
@@ -161,21 +222,27 @@ export function createArchiveAssembly(module, labelMaterial, library) {
   const glass = new Mesh(g.glass, m.glass)
   glass.position.z = 0.33
   glass.renderOrder = 2
+  // The transmissive pane creates a dark grey/green bevel at this extreme
+  // long-lens angle. When a newly selected card lifts, that refractive edge
+  // changes sub-pixel coverage and appears to shake into place like a refresh.
+  // Keep the pane out of the browse/focus/extraction transition; the frame,
+  // rails and label still provide the intended layered archive construction.
+  glass.visible = false
   // Keep the warm outer frame on its own visibility layer. Rails/rings/glass
   // may still follow the original near-detail budget, but the gold frame no
   // longer has to blink with those heavier details during wheel motion.
   frameGroup.add(left, right, top, bottom)
   nearGroup.add(railL, railR, ringTop, ringBottom, glass)
 
-  const bridge = shadow(new Mesh(g.bridge, m.inner), false, true)
+  const bridge = shadow(new Mesh(g.bridge, m.focusMetal), false, true)
   bridge.position.set(0, -0.06, 0.292)
-  const latch = shadow(new Mesh(g.latch, m.accent), false, true)
+  const latch = shadow(new Mesh(g.latch, m.focusAccent), false, true)
   latch.position.set(0, 1.48, 0.318)
 
   const fasteners = [
     [-2.12, 1.50], [2.12, 1.50], [-2.12, -1.50], [2.12, -1.50],
   ].map(([x, y]) => {
-    const bolt = shadow(new Mesh(g.fastener, m.frame), false, true)
+    const bolt = shadow(new Mesh(g.fastener, m.focusMetal), false, true)
     bolt.rotation.x = Math.PI / 2
     bolt.position.set(x, y, 0.342)
     return bolt
@@ -185,6 +252,15 @@ export function createArchiveAssembly(module, labelMaterial, library) {
     new Mesh(g.glassSide, m.gasket), new Mesh(g.glassSide, m.gasket),
     new Mesh(g.glassTop, m.gasket), new Mesh(g.glassTop, m.gasket),
   ]
+  glassEdges.forEach(edge => {
+    // These dark gasket strips are too high-contrast at the archive camera's
+    // long focal length. Making them appear during extraction creates the
+    // grey-green edge "flash" reported on the selected card, so keep them out
+    // of the visible focus transition while retaining the geometry for future
+    // close-up use.
+    edge.userData.archiveGlassEdge = true
+    edge.visible = false
+  })
   glassEdges[0].position.set(-2.24, 0, 0.365)
   glassEdges[1].position.set(2.24, 0, 0.365)
   glassEdges[2].position.set(0, 1.58, 0.365)

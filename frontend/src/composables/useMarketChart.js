@@ -206,6 +206,7 @@ export function useMarketChart() {
 
   return {
     elementRef: chart.elementRef,
+    prepare: chart.ensureChart,
     renderCandles,
     resize: chart.resize,
     clear: chart.clear,
