@@ -118,6 +118,36 @@ const TASK_RISK_CHECK: StubTask = {
   params: { warnBelowPct: 25 },
 }
 
+/**
+ * 创建于 `analyze` 参数出现**之前**的日报任务：params 里没有这个键。
+ * 执行器侧 `Boolean.TRUE.equals(analyze)` 意味着「缺失即不跑 AI」，
+ * 所以编辑器必须显示为**未勾选**，否则打开就保存会把 AI 分析静默打开。
+ */
+const TASK_DAILY_DIGEST_LEGACY: StubTask = {
+  id: 103,
+  name: '每日资讯日报（旧）',
+  task_type: 'DAILY_DIGEST',
+  status: 'ACTIVE',
+  cron_expr: '0 0 8 * * *',
+  next_run_at: '2026-09-22T08:00:00+08:00',
+  last_run_status: 'SUCCESS',
+  last_error: null,
+  params: { limit: 12, headlineCount: 3 },
+}
+
+/** 显式开启过 AI 分析的日报任务，用于确认回填不是「一律不勾选」。 */
+const TASK_DAILY_DIGEST_ANALYZE_ON: StubTask = {
+  id: 104,
+  name: '每日资讯日报（含 AI 分析）',
+  task_type: 'DAILY_DIGEST',
+  status: 'ACTIVE',
+  cron_expr: '0 0 8 * * *',
+  next_run_at: '2026-09-22T08:00:00+08:00',
+  last_run_status: 'SUCCESS',
+  last_error: null,
+  params: { limit: 10, headlineCount: 3, analyze: true },
+}
+
 /** 4 个执行器全部就绪（DAILY_DIGEST 于 2026-09-20 补齐后的现状）。 */
 const ALL_TYPES = [
   { type: 'MARKET_SCAN', supported: true },
@@ -672,5 +702,44 @@ test.describe('定时任务 · 核心流程', () => {
     await expect
       .poll(() => listCalls.count, { message: '点击刷新应重新请求任务列表' })
       .toBeGreaterThan(before)
+  })
+
+  // ── 编辑回填口径 ────────────────────────────────────────────────────
+
+  test('编辑旧日报任务时，「AI 分析」应反映真实配置而非默认勾选', async ({ scheduledTasksPage, page }) => {
+    await stubScheduledTasksApi(page, { tasks: [TASK_DAILY_DIGEST_LEGACY] })
+    await scheduledTasksPage.goto(PREVIEW_PARAMS)
+    await scheduledTasksPage.openFromWorkspace()
+
+    await scheduledTasksPage.clickAndWait(
+      scheduledTasksPage.rowAction(TASK_DAILY_DIGEST_LEGACY.name, '编辑'),
+      '应能打开该任务的编辑弹窗',
+    )
+    await scheduledTasksPage.expectVisible(scheduledTasksPage.editor, '编辑弹窗应打开')
+
+    // 这条钉住一个真实缺陷：回填若写成 `params.analyze !== false`，旧任务会显示成"已勾选"，
+    // 用户没碰它就保存 → 静默把 AI 分析从关改成开并产生用量。必须与执行器口径一致。
+    await expect(
+      scheduledTasksPage.digestAnalyzeCheckbox,
+      'params 里没有 analyze 时不应勾选（执行器同样不会跑 AI）',
+    ).not.toBeChecked()
+  })
+
+  test('显式开启过 AI 分析的日报任务，编辑时应保持勾选', async ({ scheduledTasksPage, page }) => {
+    await stubScheduledTasksApi(page, { tasks: [TASK_DAILY_DIGEST_ANALYZE_ON] })
+    await scheduledTasksPage.goto(PREVIEW_PARAMS)
+    await scheduledTasksPage.openFromWorkspace()
+
+    await scheduledTasksPage.clickAndWait(
+      scheduledTasksPage.rowAction(TASK_DAILY_DIGEST_ANALYZE_ON.name, '编辑'),
+      '应能打开该任务的编辑弹窗',
+    )
+    await scheduledTasksPage.expectVisible(scheduledTasksPage.editor, '编辑弹窗应打开')
+
+    // 反向验证，避免把回填修成「一律不勾选」——那会丢掉用户显式开启的配置。
+    await expect(
+      scheduledTasksPage.digestAnalyzeCheckbox,
+      'analyze 显式为 true 的任务应保持勾选',
+    ).toBeChecked()
   })
 })
