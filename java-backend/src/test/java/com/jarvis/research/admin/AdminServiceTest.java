@@ -2,6 +2,7 @@ package com.jarvis.research.admin;
 
 import com.jarvis.research.audit.AuditService;
 import com.jarvis.research.service.AiQuotaService;
+import com.jarvis.research.user.AiQuota;
 import com.jarvis.research.user.GroupAiQuotaRepository;
 import com.jarvis.research.user.GroupFeaturePermissionRepository;
 import com.jarvis.research.user.OAuthAccountRepository;
@@ -73,6 +74,31 @@ class AdminServiceTest {
                 argThat(detail -> detail.contains("before=enabled:true")
                         && detail.contains("after=enabled:false")
                         && detail.contains("reason=管理员确认的异常注册")));
+    }
+
+    @Test
+    void quotaAuditReportsUnsetWhenCreatingTheFirstUserOverride() {
+        User target = user(72L, "USER", true, 0);
+        when(userRepository.findById(72L)).thenReturn(Optional.of(target));
+        when(quotaService.findForAdmin(72L)).thenReturn(Optional.empty());
+        AiQuota createdQuota = AiQuota.builder()
+                .userId(72L)
+                .dailyRequestLimit(100)
+                .monthlyTokenLimit(0)
+                .build();
+        when(quotaService.getOrCreateForAdmin(72L)).thenReturn(createdQuota);
+
+        AdminDtos.QuotaRequest request = new AdminDtos.QuotaRequest();
+        request.setDailyRequestLimit(40);
+        request.setMonthlyTokenLimit(250_000L);
+        request.setReason("设置专属配额");
+
+        service.updateQuota(9L, 72L, request, "198.51.100.4");
+
+        verify(auditService).record(eq(9L), eq("ADMIN_AI_QUOTA"), eq("user:72"), eq("198.51.100.4"),
+                argThat(detail -> detail.contains("before=unset")
+                        && detail.contains("after=dailyRequestLimit:40,monthlyTokenLimit:250000")
+                        && detail.contains("reason=设置专属配额")));
     }
 
     @Test

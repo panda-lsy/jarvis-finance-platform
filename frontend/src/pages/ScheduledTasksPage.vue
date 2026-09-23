@@ -156,7 +156,12 @@ function openEdit(task) {
     asOf: params.asOf || '',
     digestLimit: Number(params.limit ?? 10),
     headlineCount: Number(params.headlineCount ?? 3),
-    analyzeNews: params.analyze !== false,
+    // 必须与执行器口径一致：DailyDigestExecutor 用 Boolean.TRUE.equals(analyze)，
+    // 即**参数缺失时不跑 AI**。这里若写成 `!== false`，打开一个早期任务（params 里还没有
+    // analyze）会显示成"已勾选"，用户没碰它就点保存 → 静默把 AI 分析从关变开、产生用量。
+    // 该口径由 `e2e/tests/scheduled-tasks.spec.ts` 的「编辑旧日报任务时……」用例钉住
+    // （改回 `!== false` 该用例会立刻变红）。
+    analyzeNews: params.analyze === true,
   })
   editorOpen.value = true
 }
