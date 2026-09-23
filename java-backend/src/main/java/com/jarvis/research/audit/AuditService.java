@@ -9,6 +9,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -33,15 +34,26 @@ public class AuditService {
 
     @Transactional(readOnly = true)
     public List<AuditEvent> recentForUser(Long userId, int limit) {
-        if (limit < 1 || limit > 200) {
-            throw new IllegalArgumentException("limit 必须在 1~200 之间");
-        }
+        validateLimit(limit);
         return repository.findByUserIdOrderByCreatedAtDesc(userId, PageRequest.of(0, limit));
     }
 
     @Transactional(readOnly = true)
     public List<AuditEvent> recentForAdmin(Long userId, int limit) {
-        return recentForUser(userId, limit);
+        validateLimit(limit);
+        PageRequest page = PageRequest.of(0, limit);
+        Map<Long, AuditEvent> unique = new HashMap<>();
+        repository.findByUserIdOrderByCreatedAtDesc(userId, page)
+                .forEach(event -> unique.put(event.getId(), event));
+        repository.findByTargetOrderByCreatedAtDesc("user:" + userId, page)
+                .forEach(event -> unique.put(event.getId(), event));
+
+        return unique.values().stream()
+                .sorted(Comparator.comparing(AuditEvent::getCreatedAt,
+                                Comparator.nullsLast(Comparator.reverseOrder()))
+                        .thenComparing(AuditEvent::getId, Comparator.nullsLast(Comparator.reverseOrder())))
+                .limit(limit)
+                .toList();
     }
 
     /** 当前用户近 N 天审计事件聚合报表（Java 内存聚合，兼容 H2/PostgreSQL）。 */
@@ -84,5 +96,11 @@ public class AuditService {
         if (value == null) return null;
         String v = value.trim();
         return v.length() <= max ? v : v.substring(0, max);
+    }
+
+    private void validateLimit(int limit) {
+        if (limit < 1 || limit > 200) {
+            throw new IllegalArgumentException("limit 必须在 1~200 之间");
+        }
     }
 }

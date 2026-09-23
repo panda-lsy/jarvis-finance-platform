@@ -252,13 +252,37 @@ test('authorization 403 is not replayed as a CSRF failure', async () => {
   }
 
   try {
-    const response = await api.adminUpdateStatus(42, false)
+    const response = await api.adminUpdateStatus(42, false, 'verified abuse')
     assert.equal(response.httpStatus, 403)
   } finally {
     globalThis.fetch = previousFetch
   }
 
   assert.equal(calls.filter(call => call.url.endsWith('/api/admin/users/42/status')).length, 1)
+})
+
+test('admin session revocation posts an explicit audit reason with CSRF protection', async () => {
+  const calls = []
+  const previousFetch = globalThis.fetch
+  globalThis.fetch = async (url, options = {}) => {
+    calls.push({ url: String(url), method: options.method || 'GET', headers: options.headers, body: options.body })
+    if (String(url).endsWith('/api/auth/csrf')) {
+      return { ok: true, status: 200, json: async () => ({ code: 200, data: { token: 'csrf-revoke' } }) }
+    }
+    return { ok: true, status: 200, json: async () => ({ code: 200, data: { userId: 72, sessionsRevoked: true } }) }
+  }
+
+  try {
+    const response = await api.adminRevokeSessions(72, { reason: 'security review' })
+    assert.equal(response.code, 200)
+  } finally {
+    globalThis.fetch = previousFetch
+  }
+
+  const revoke = calls.find(call => call.url.endsWith('/api/admin/users/72/sessions/revoke'))
+  assert.equal(revoke.method, 'POST')
+  assert.match(revoke.headers['X-XSRF-TOKEN'], /^csrf-/)
+  assert.deepEqual(JSON.parse(revoke.body), { reason: 'security review' })
 })
 
 test('late session restore cannot overwrite a successful login', async () => {

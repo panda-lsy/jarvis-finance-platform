@@ -1,8 +1,20 @@
-# JARVIS 需求完成度审计（2026-09-22）
+# JARVIS 需求完成度审计（2026-09-23）
 
 本次审计基于 `doc/01_JARVIS金融投研平台_Software Requirement Specification_V1.0.md`、
 `specs/financial-agent-workflow/`、`specs/market-chart-financial-import/` 以及部署文档。
 文档中的视觉稿人工检查项与产品功能验收项分开统计，避免把视觉草图的 checklist 当成后端功能缺陷。
+
+## 2026-09-23 补充审计
+
+- FR-14 管理员账户管理补齐“重置登录状态”：管理员可提交必填原因撤销目标账户所有已签发 JWT；服务端递增 `credential_version`，之后旧 JWT 会被认证过滤器拒绝，且密码不变。管理员不能撤销自己的会话。
+- 管理员账户启停、角色、个人/用户组配额与功能权限、用户组资料/成员/删除操作现在均校验必填操作原因；审计详情记录变更前后摘要。组名/描述、功能和成员摘要均有长度/数量边界。
+- 修复目标用户审计页漏项：除了展示该用户作为操作者的事件，也会展示 `target=user:<id>` 指向该用户的管理员操作；分页上限、去重、时间倒序均保留。
+- 验证：Java 全量 Maven 测试 631 tests / 0 failures / 0 errors / 5 skipped；新增 H2 持久化集成测试覆盖旧 JWT 在撤销前后有效性、凭证版本落库、审计落库及目标用户审计可见性。前端 `npm run test:p0` 为 204 passed，`npm run build` 通过；E2E 类型检查通过，管理员工作区 Mock 浏览器用例 2/2 通过；Python 测试 265 passed。
+- GitHub PR#25（`fix(agent): preserve Java-Python chat role contract`）已于 2026-09-23 合并为 `afa1f8e`；确认 Gitee `main` 原提交 `fc9a965` 是其祖先后，已快进同步 Gitee `main` 至 `afa1f8e`。当前管理端改动分支也已基于该共同基线。
+- 2026-09-23 紧急修复生产 Java→Python 聊天消息角色契约：旧服务把 `role=system` 作为客户端消息发送，违反 Python 仅接受 `user/assistant` 的 schema。PR#25 已让 Java 只发送 `user` 消息，并由 Python 基于可信 `research_context` 注入系统约束；生产原子发布为 `20260923-afa1f8e-agent-fix`（提交 `afa1f8e`），旧 release `20260922-pr24-fc9a965` 保留用于回滚。本次无数据库迁移，Flyway schema 不变。
+- 该生产发布的 Java/Python readiness、公开 smoke（含行情、SSE、回测）通过；随后使用低权限 smoke 账号执行 `CHECK_AGENT_STREAM=1`，真实 Agent SSE 与 PostgreSQL 事件回放均通过，覆盖本次受影响链路。仅后端有改动，前端无需发布。
+- 管理端会话撤销/审计实现已通过 GitHub PR#26 合并，合并提交 `7ef809f`，并于 2026-09-23 部署到生产 release `20260923-7ef809f-admin3`。GitHub Pages 前端部署及 CI 均成功；Java/Python readiness、公网 smoke、Agent SSE 与 PostgreSQL 事件回放通过。本次无数据库迁移；上一 release `20260923-afa1f8e-agent-fix` 保留用于回滚。真实管理员 OAuth/审计浏览器验收仍缺生产管理员凭据，不以 Mock E2E 代替。
+- GitHub 当前无开放 PR。Gitee PR#19（修正旧日报任务编辑时 `analyze` 默认行为及相应文档/验收用例）核心逻辑与执行器的 `Boolean.TRUE.equals(analyze)` 一致，定时任务 Playwright 用例 24/24 通过；复核修正了测试数（22→24）及新建任务默认值说明，提交 `a210ece` 已推送 PR 分支。PR#20 主体管理员功能已由 GitHub PR#26 部署；本次复审发现首次创建用户级配额覆盖时，审计会把刚创建的默认值误记为变更前状态，已修为 `before=unset` 并新增回归测试，提交 `f9c5e4b` 已推送 Gitee PR 分支，但该 follow-up 尚未进入 GitHub `main` 或生产。完整 Java 测试 632 tests / 0 failures / 0 errors / 5 skipped。PR#19、PR#20 均无冲突；指定测试人 `mc_shengxia` 尚未接受，平台 `can_merge_check=false`，因此暂不能合并或同步到 Gitee `main`。不能代替测试人确认验收。
 
 ## 本次已补齐
 

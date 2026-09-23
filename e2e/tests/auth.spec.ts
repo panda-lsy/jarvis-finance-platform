@@ -1,5 +1,5 @@
 import { type APIRequestContext } from '@playwright/test'
-import { test } from '../fixtures/test'
+import { expect, test } from '../fixtures/test'
 import { API_URL, CREDENTIALS, hasCredentials } from '../utils/env'
 
 /**
@@ -40,16 +40,22 @@ test.describe('登录与权限', () => {
     await loginPage.expectError()
   })
 
-  test('正确凭据登录后可进入工作台', async ({ loginPage, workspacePage, request }) => {
+  test('普通用户登录后看不到管理员工作区', async ({ loginPage, workspacePage, request, page }) => {
     test.skip(!(await backendReady(request)), `后端未就绪（${API_URL}），跳过需要真实接口的用例`)
     test.skip(!hasCredentials('user'), '未配置 E2E_USER_EMAIL / E2E_USER_PASSWORD，跳过真实登录用例')
 
     await loginPage.openLogin()
     await loginPage.login(CREDENTIALS.user.email, CREDENTIALS.user.password)
     await workspacePage.expectShellVisible()
+
+    await page.locator('.workspace-function-menu')
+      .filter({ has: page.locator('summary', { hasText: /^系统/ }) })
+      .locator('summary')
+      .click()
+    await expect(page.getByRole('button', { name: /^管理后台/ })).toHaveCount(0)
   })
 
-  test('管理员登录后可进入工作台', async ({ loginPage, workspacePage, request }) => {
+  test('管理员登录后可查看账户与审计工作区', async ({ loginPage, workspacePage, request, page }) => {
     test.skip(!(await backendReady(request)), `后端未就绪（${API_URL}），跳过需要真实接口的用例`)
     test.skip(!hasCredentials('admin'), '未配置 E2E_ADMIN_EMAIL / E2E_ADMIN_PASSWORD，跳过管理员用例')
 
@@ -57,7 +63,29 @@ test.describe('登录与权限', () => {
     await loginPage.login(CREDENTIALS.admin.email, CREDENTIALS.admin.password)
     await workspacePage.expectShellVisible()
 
-    // TODO(nav-ia-v11)：二级菜单（A2/A4）落地后，在此补「系统管理」域对 ADMIN 可见、
-    // 对普通 USER 不可见的断言。当前「管理」入口挂在旧 AppTabs 上，断言不稳定，暂不写。
+    await page.locator('.workspace-function-menu')
+      .filter({ has: page.locator('summary', { hasText: /^系统/ }) })
+      .locator('summary')
+      .click()
+    const adminModule = page.getByRole('button', { name: /^管理后台/ })
+    await expect(adminModule, 'ADMIN 应能看到管理后台入口').toBeVisible()
+
+    const usersResponsePromise = page.waitForResponse(response =>
+      response.url().includes('/api/admin/users') && response.request().method() === 'GET')
+    await adminModule.click()
+    const usersResponse = await usersResponsePromise
+    expect(usersResponse.ok(), '管理员用户目录接口应返回成功').toBeTruthy()
+    await expect(page.getByRole('heading', { name: '访问控制' })).toBeVisible()
+    await expect(page.getByText('最近审计事件', { exact: false })).toBeVisible()
+
+    const firstUser = page.getByRole('option').first()
+    await expect(firstUser, '管理员工作区应显示可查询的账户目录').toBeVisible()
+    const auditResponsePromise = page.waitForResponse(response =>
+      /\/api\/admin\/users\/\d+\/audit/.test(response.url()) && response.request().method() === 'GET')
+    await firstUser.click()
+    const auditResponse = await auditResponsePromise
+    expect(auditResponse.ok(), '管理员应可查询目标账户的审计事件').toBeTruthy()
+    await expect(page.getByLabel('账户操作原因')).toBeVisible()
+    await expect(page.getByRole('button', { name: '重置登录状态' })).toBeVisible()
   })
 })
