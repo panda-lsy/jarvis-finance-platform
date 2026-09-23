@@ -42,7 +42,7 @@ public class AdminController {
                                                    @Valid @RequestBody StatusRequest body,
                                                    HttpServletRequest request) {
         return ApiResponse.ok(adminService.updateStatus(
-                CurrentUser.id(), userId, body.getEnabled(), clientIp(request)));
+                CurrentUser.id(), userId, body.getEnabled(), body.getReason(), clientIp(request)));
     }
 
     @PatchMapping("/users/{userId}/role")
@@ -50,7 +50,15 @@ public class AdminController {
                                                  @Valid @RequestBody RoleRequest body,
                                                  HttpServletRequest request) {
         return ApiResponse.ok(adminService.updateRole(
-                CurrentUser.id(), userId, body.getRole(), clientIp(request)));
+                CurrentUser.id(), userId, body.getRole(), body.getReason(), clientIp(request)));
+    }
+
+    @PostMapping("/users/{userId}/sessions/revoke")
+    public ApiResponse<Map<String, Object>> revokeSessions(@PathVariable Long userId,
+                                                           @Valid @RequestBody SessionRevokeRequest body,
+                                                           HttpServletRequest request) {
+        return ApiResponse.ok(adminService.revokeSessions(
+                CurrentUser.id(), userId, body.getReason(), clientIp(request)));
     }
 
     @PutMapping("/users/{userId}/quota")
@@ -93,8 +101,10 @@ public class AdminController {
     }
 
     @DeleteMapping("/groups/{groupId}")
-    public ApiResponse<Void> deleteGroup(@PathVariable Long groupId, HttpServletRequest request) {
-        adminService.deleteGroup(CurrentUser.id(), groupId, clientIp(request));
+    public ApiResponse<Void> deleteGroup(@PathVariable Long groupId,
+                                         @Valid @RequestBody ReasonRequest body,
+                                         HttpServletRequest request) {
+        adminService.deleteGroup(CurrentUser.id(), groupId, body.getReason(), clientIp(request));
         return ApiResponse.ok(null);
     }
 

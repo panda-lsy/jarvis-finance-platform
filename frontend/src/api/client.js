@@ -375,11 +375,14 @@ export const api = {
   adminUsers: (query = '', limit = 50) => get(API_BASE, '/api/admin/users', { query, limit }),
   adminUser: (userId) => get(API_BASE, `/api/admin/users/${userId}`),
   adminUserAudit: (userId, limit = 50) => get(API_BASE, `/api/admin/users/${userId}/audit`, { limit }),
-  adminUpdateStatus: (userId, enabled) => request(API_BASE, `/api/admin/users/${userId}/status`, {
-    method: 'PATCH', body: JSON.stringify({ enabled }),
+  adminUpdateStatus: (userId, enabled, reason) => request(API_BASE, `/api/admin/users/${userId}/status`, {
+    method: 'PATCH', body: JSON.stringify({ enabled, reason }),
   }),
-  adminUpdateRole: (userId, role) => request(API_BASE, `/api/admin/users/${userId}/role`, {
-    method: 'PATCH', body: JSON.stringify({ role }),
+  adminUpdateRole: (userId, role, reason) => request(API_BASE, `/api/admin/users/${userId}/role`, {
+    method: 'PATCH', body: JSON.stringify({ role, reason }),
+  }),
+  adminRevokeSessions: (userId, body) => request(API_BASE, `/api/admin/users/${userId}/sessions/revoke`, {
+    method: 'POST', body: JSON.stringify(body),
   }),
   adminUpdateQuota: (userId, body) => request(API_BASE, `/api/admin/users/${userId}/quota`, {
     method: 'PUT', body: JSON.stringify(body),
@@ -395,7 +398,9 @@ export const api = {
   adminUpdateGroup: (groupId, body) => request(API_BASE, `/api/admin/groups/${groupId}`, {
     method: 'PATCH', body: JSON.stringify(body),
   }),
-  adminDeleteGroup: (groupId) => request(API_BASE, `/api/admin/groups/${groupId}`, { method: 'DELETE' }),
+  adminDeleteGroup: (groupId, reason) => request(API_BASE, `/api/admin/groups/${groupId}`, {
+    method: 'DELETE', body: JSON.stringify({ reason }),
+  }),
   adminUpdateGroupMembers: (groupId, body) => request(API_BASE, `/api/admin/groups/${groupId}/members`, {
     method: 'PUT', body: JSON.stringify(body),
   }),

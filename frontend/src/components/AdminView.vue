@@ -4,6 +4,10 @@ import { api } from '../api/client'
 import DataState from './common/DataState.vue'
 import NewsSourceAdminPanel from './NewsSourceAdminPanel.vue'
 
+const props = defineProps({
+  currentUserId: { type: [Number, String], default: null },
+})
+
 const users = ref([])
 const groups = ref([])
 const selected = ref(null)
@@ -17,11 +21,18 @@ const error = ref('')
 const usersError = ref('')
 const groupsError = ref('')
 const audit = ref([])
+const accountActionReason = ref('')
+const roleReason = ref('')
+const roleDraft = ref('USER')
 const quota = reactive({ dailyRequestLimit: 100, monthlyTokenLimit: 0, reason: '' })
 const permissions = ref('')
+const permissionReason = ref('')
 const groupName = ref('')
 const groupDescription = ref('')
+const groupInfoReason = ref('')
 const groupMembers = ref([])
+const groupMembersReason = ref('')
+const groupDeleteReason = ref('')
 const groupPermissions = ref('')
 const groupQuota = reactive({ dailyRequestLimit: 100, monthlyTokenLimit: 0, reason: '' })
 const groupPermissionReason = ref('')
@@ -32,7 +43,10 @@ function startNewGroup() {
   selectedGroup.value = null
   groupName.value = ''
   groupDescription.value = ''
+  groupInfoReason.value = ''
   groupMembers.value = []
+  groupMembersReason.value = ''
+  groupDeleteReason.value = ''
   groupPermissions.value = ''
   Object.assign(groupQuota, { dailyRequestLimit: 100, monthlyTokenLimit: 0, reason: '' })
   groupPermissionReason.value = ''
@@ -86,7 +100,10 @@ async function selectGroup(group) {
     selectedGroup.value = response.data
     groupName.value = response.data.name || ''
     groupDescription.value = response.data.description || ''
+    groupInfoReason.value = ''
     groupMembers.value = (response.data.members || []).map(member => member.id)
+    groupMembersReason.value = ''
+    groupDeleteReason.value = ''
     groupPermissions.value = (response.data.permissions || []).join(', ')
     Object.assign(groupQuota, {
       dailyRequestLimit: response.data.quota?.dailyRequestLimit ?? 100,
@@ -99,14 +116,15 @@ async function selectGroup(group) {
 }
 
 async function createGroup() {
-  if (!groupName.value.trim()) {
-    showError('请填写用户组名称')
+  if (!groupName.value.trim() || !groupInfoReason.value.trim()) {
+    showError('请填写用户组名称和操作原因')
     return
   }
   groupSaving.value = true
   try {
     const response = await api.adminCreateGroup({
       name: groupName.value.trim(), description: groupDescription.value.trim(),
+      reason: groupInfoReason.value.trim(),
     })
     if (response.code !== 200) throw new Error(response.message || '创建用户组失败')
     await loadGroups()
@@ -117,11 +135,15 @@ async function createGroup() {
 }
 
 async function updateGroup() {
-  if (!selectedGroup.value || !groupName.value.trim()) return
+  if (!selectedGroup.value || !groupName.value.trim() || !groupInfoReason.value.trim()) {
+    showError('请填写用户组名称和操作原因')
+    return
+  }
   groupSaving.value = true
   try {
     const response = await api.adminUpdateGroup(selectedGroup.value.id, {
       name: groupName.value.trim(), description: groupDescription.value.trim(),
+      reason: groupInfoReason.value.trim(),
     })
     if (response.code !== 200) throw new Error(response.message || '用户组更新失败')
     await loadGroups()
@@ -132,11 +154,14 @@ async function updateGroup() {
 }
 
 async function saveGroupMembers() {
-  if (!selectedGroup.value) return
+  if (!selectedGroup.value || !groupMembersReason.value.trim()) {
+    showError('请填写用户组成员调整原因')
+    return
+  }
   groupSaving.value = true
   try {
     const response = await api.adminUpdateGroupMembers(selectedGroup.value.id, {
-      userIds: groupMembers.value.map(Number), reason: '管理员后台调整用户组成员',
+      userIds: groupMembers.value.map(Number), reason: groupMembersReason.value.trim(),
     })
     if (response.code !== 200) throw new Error(response.message || '组成员更新失败')
     await loadGroups()
@@ -185,10 +210,14 @@ async function updateGroupPermissions() {
 }
 
 async function deleteGroup() {
-  if (!selectedGroup.value || !window.confirm(`确认删除用户组“${selectedGroup.value.name}”？`)) return
+  if (!selectedGroup.value || !groupDeleteReason.value.trim()) {
+    showError('请填写删除用户组的原因')
+    return
+  }
+  if (!window.confirm(`确认删除用户组“${selectedGroup.value.name}”？此操作会记录审计事件。`)) return
   groupSaving.value = true
   try {
-    const response = await api.adminDeleteGroup(selectedGroup.value.id)
+    const response = await api.adminDeleteGroup(selectedGroup.value.id, groupDeleteReason.value.trim())
     if (response.code !== 200) throw new Error(response.message || '用户组删除失败')
     startNewGroup()
     await loadGroups()
@@ -204,6 +233,9 @@ async function selectUser(user) {
     const response = await api.adminUser(user.id)
     if (response.code !== 200) throw new Error(response.message || '用户详情加载失败')
     selected.value = response.data
+    roleDraft.value = response.data.role || 'USER'
+    accountActionReason.value = ''
+    roleReason.value = ''
     try {
       const auditResponse = await api.adminUserAudit(user.id)
       audit.value = auditResponse.code === 200 ? (auditResponse.data || []) : []
@@ -216,29 +248,64 @@ async function selectUser(user) {
       reason: '',
     })
     permissions.value = (response.data.permissions || []).join(', ')
+    permissionReason.value = ''
   } catch (e) { showError(e) }
   finally { selectedLoading.value = false }
 }
 
 async function updateStatus() {
-  if (!selected.value) return
+  if (!selected.value || !accountActionReason.value.trim()) {
+    showError('请填写账户操作原因')
+    return
+  }
   try {
-    const response = await api.adminUpdateStatus(selected.value.id, !selected.value.enabled)
+    const response = await api.adminUpdateStatus(
+      selected.value.id, !selected.value.enabled, accountActionReason.value.trim(),
+    )
     if (response.code !== 200) throw new Error(response.message || '账户状态更新失败')
     selected.value = { ...selected.value, ...response.data }
+    accountActionReason.value = ''
     message.value = '账户状态已更新'
     await loadUsers()
+    await selectUser(selected.value)
   } catch (e) { showError(e) }
 }
 
 async function updateRole() {
-  if (!selected.value) return
+  if (!selected.value || !roleReason.value.trim()) {
+    showError('请填写角色变更原因')
+    return
+  }
   try {
-    const response = await api.adminUpdateRole(selected.value.id, selected.value.role)
+    const response = await api.adminUpdateRole(selected.value.id, roleDraft.value, roleReason.value.trim())
     if (response.code !== 200) throw new Error(response.message || '角色更新失败')
     selected.value = { ...selected.value, ...response.data }
+    roleDraft.value = response.data.role || roleDraft.value
+    roleReason.value = ''
     message.value = '账户角色已更新'
     await loadUsers()
+    await selectUser(selected.value)
+  } catch (e) { showError(e) }
+}
+
+async function revokeSessions() {
+  if (!selected.value || !accountActionReason.value.trim()) {
+    showError('请填写重置登录状态的原因')
+    return
+  }
+  if (Number(selected.value.id) === Number(props.currentUserId)) {
+    showError('不能重置当前管理员自己的登录状态')
+    return
+  }
+  if (!window.confirm(`撤销 ${selected.value.email} 的所有现有登录令牌；不修改密码。是否继续？`)) return
+  try {
+    const response = await api.adminRevokeSessions(selected.value.id, {
+      reason: accountActionReason.value.trim(),
+    })
+    if (response.code !== 200) throw new Error(response.message || '重置登录状态失败')
+    accountActionReason.value = ''
+    message.value = '该账户的现有登录令牌已撤销，需重新登录'
+    await selectUser(selected.value)
   } catch (e) { showError(e) }
 }
 
@@ -260,14 +327,19 @@ async function updateQuota() {
 }
 
 async function updatePermissions() {
-  if (!selected.value) return
+  if (!selected.value || !permissionReason.value.trim()) {
+    showError('请填写功能权限调整原因')
+    return
+  }
   try {
     const response = await api.adminUpdatePermissions(selected.value.id, {
       features: permissions.value.split(',').map(v => v.trim()).filter(Boolean),
-      reason: '管理员后台调整功能权限',
+      reason: permissionReason.value.trim(),
     })
     if (response.code !== 200) throw new Error(response.message || '权限更新失败')
     selected.value = response.data
+    permissionReason.value = ''
+    await selectUser(selected.value)
     message.value = '功能权限已更新'
   } catch (e) { showError(e) }
 }
@@ -328,7 +400,7 @@ onMounted(async () => {
             </div>
             <div class="account-actions">
               <span class="status-label" :class="selected.enabled ? 'ok' : 'bad'"><i></i>{{ selected.enabled ? 'ENABLED' : 'DISABLED' }}</span>
-              <button type="button" class="btn danger" @click="updateStatus">{{ selected.enabled ? '禁用账户' : '重新启用' }}</button>
+              <button type="button" class="btn danger" :disabled="Number(selected.id) === Number(props.currentUserId) && selected.enabled || !accountActionReason.trim()" @click="updateStatus">{{ selected.enabled ? '禁用账户' : '重新启用' }}</button>
             </div>
           </div>
 
@@ -342,12 +414,20 @@ onMounted(async () => {
             <div><span>用户组</span><b>{{ selected.group?.name || '未分组' }}</b></div>
           </div>
 
+          <div class="account-mutation-row">
+            <input v-model="accountActionReason" class="input" aria-label="账户操作原因" placeholder="账户操作原因（必填，用于审计）" />
+            <button type="button" class="btn" :disabled="!accountActionReason.trim() || Number(selected.id) === Number(props.currentUserId)" @click="revokeSessions">重置登录状态</button>
+            <small>撤销全部已签发登录令牌，不修改密码；用户下次请求需重新登录。</small>
+          </div>
+
           <label class="role-control">
             <span>账户角色</span>
-            <select v-model="selected.role" class="select" @change="updateRole">
+            <select v-model="roleDraft" class="select">
               <option value="USER">普通用户 USER</option>
               <option value="ADMIN">管理员 ADMIN</option>
             </select>
+            <input v-model="roleReason" class="input" aria-label="角色变更原因" placeholder="角色变更原因（必填）" />
+            <button type="button" class="btn" :disabled="!roleReason.trim() || Number(selected.id) === Number(props.currentUserId) && roleDraft !== 'ADMIN'" @click="updateRole">保存角色</button>
           </label>
         </section>
 
@@ -374,7 +454,8 @@ onMounted(async () => {
             </div>
             <textarea v-model="permissions" class="permission-input" aria-label="功能权限列表" placeholder="AI_CHAT, MARKET_ADVANCED"></textarea>
             <div class="permission-hint">多个权限使用逗号分隔。保存后会替换该用户当前的功能权限集合。</div>
-            <button type="button" class="btn primary" @click="updatePermissions">保存权限</button>
+            <input v-model="permissionReason" class="input full" aria-label="功能权限调整原因" placeholder="调整原因（必填，用于审计）" />
+            <button type="button" class="btn primary" :disabled="!permissionReason.trim()" @click="updatePermissions">保存权限</button>
           </section>
         </div>
 
@@ -403,8 +484,9 @@ onMounted(async () => {
         <div class="group-create-form">
           <input v-model="groupName" class="input" aria-label="用户组名称" placeholder="新用户组名称" />
           <input v-model="groupDescription" class="input" aria-label="用户组描述" placeholder="描述（可选）" />
-          <button v-if="!selectedGroup" type="button" class="btn primary" :disabled="groupSaving" @click="createGroup">创建用户组</button>
-          <button v-else type="button" class="btn" :disabled="groupSaving" @click="updateGroup">保存组信息</button>
+          <input v-model="groupInfoReason" class="input" aria-label="用户组信息调整原因" placeholder="操作原因（必填，用于审计）" />
+          <button v-if="!selectedGroup" type="button" class="btn primary" :disabled="groupSaving || !groupInfoReason.trim()" @click="createGroup">创建用户组</button>
+          <button v-else type="button" class="btn" :disabled="groupSaving || !groupInfoReason.trim()" @click="updateGroup">保存组信息</button>
         </div>
         <div class="group-list" role="listbox" aria-label="用户组目录">
           <button v-for="group in groups" :key="group.id" type="button" class="group-row"
@@ -420,7 +502,10 @@ onMounted(async () => {
       <div v-if="selectedGroup" class="group-detail detail-panel" :aria-busy="groupLoading || groupSaving">
         <div class="detail-head">
           <div><h3>{{ selectedGroup.name }}</h3><span>组级策略 · 用户级覆盖优先</span></div>
-          <button type="button" class="btn danger" :disabled="groupSaving" @click="deleteGroup">删除用户组</button>
+          <div class="group-delete-control">
+            <input v-model="groupDeleteReason" class="input" aria-label="删除用户组原因" placeholder="删除原因（必填）" />
+            <button type="button" class="btn danger" :disabled="groupSaving || !groupDeleteReason.trim()" @click="deleteGroup">删除用户组</button>
+          </div>
         </div>
         <div class="group-controls">
           <section class="group-card">
@@ -431,7 +516,8 @@ onMounted(async () => {
                 <span>{{ user.displayName || user.email }}</span>
               </label>
             </div>
-            <button type="button" class="btn primary" :disabled="groupSaving" @click="saveGroupMembers">保存成员</button>
+            <input v-model="groupMembersReason" class="input full" aria-label="用户组成员调整原因" placeholder="成员调整原因（必填，用于审计）" />
+            <button type="button" class="btn primary" :disabled="groupSaving || !groupMembersReason.trim()" @click="saveGroupMembers">保存成员</button>
           </section>
 
           <section class="group-card">
@@ -510,6 +596,8 @@ onMounted(async () => {
 .detail-head h3 { margin: 0; color: var(--text); font-size: 14px; font-weight: 680; }
 .detail-head > div:first-child > span { display: block; margin-top: 3px; color: var(--subtle); font-size: 9px; }
 .account-actions { display: flex; align-items: center; gap: 8px; }
+.account-mutation-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 7px; margin-top: 10px; }
+.account-mutation-row small { grid-column: 1 / -1; color: var(--subtle); font-size: 8px; }
 .status-label { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); font-size: 8px; letter-spacing: .05em; }
 .status-label i { width: 5px; height: 5px; border-radius: 50%; background: var(--bad); }
 .status-label.ok { color: #67c98e; }
@@ -519,7 +607,7 @@ onMounted(async () => {
 .account-meta > div { padding: 8px 9px; background: var(--surface); min-width: 0; }
 .account-meta span { display: block; color: var(--subtle); font-size: 7px; letter-spacing: .05em; }
 .account-meta b { display: block; margin-top: 4px; color: var(--text); font-size: 9px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.role-control { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+.role-control { display: grid; grid-template-columns: auto minmax(130px, .8fr) minmax(150px, 2fr) auto; align-items: center; gap: 8px; margin-top: 12px; }
 .role-control > span { color: var(--muted); font-size: 9px; }
 .select { height: 31px; padding: 0 8px; font-size: 9px; }
 .control-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
@@ -555,6 +643,7 @@ onMounted(async () => {
 .group-workspace { display: grid; grid-template-columns: minmax(250px, 300px) minmax(0, 1fr); gap: 10px; align-items: start; }
 .group-directory, .group-detail { min-width: 0; }
 .group-head-actions { display: flex; align-items: center; gap: 8px; }
+.group-delete-control { display: grid; grid-template-columns: minmax(120px, 1fr) auto; align-items: center; gap: 7px; }
 .group-create-form { display: grid; gap: 7px; margin-top: 10px; }
 .group-create-form .input { width: 100%; height: 30px; padding: 0 8px; font-size: 9px; }
 .group-list { display: grid; gap: 3px; max-height: 300px; overflow: auto; margin-top: 10px; }
@@ -575,7 +664,7 @@ onMounted(async () => {
 .member-check input { accent-color: var(--accent); }
 @media (max-width: 1050px) { .group-controls { grid-template-columns: 1fr 1fr; } .group-card:last-child { grid-column: 1 / -1; } }
 @media (max-width: 720px) { .group-workspace { grid-template-columns: 1fr; } .group-controls { grid-template-columns: 1fr; } .group-card:last-child { grid-column: auto; } }
-@media (max-width: 950px) { .admin-layout { grid-template-columns: 220px minmax(0, 1fr); } .control-grid { grid-template-columns: 1fr; } .account-meta { grid-template-columns: 1fr 1fr; } }
-@media (max-width: 720px) { .admin-head { align-items: flex-start; flex-direction: column; } .admin-layout { grid-template-columns: 1fr; } .directory-panel { max-height: 260px; } .user-list { max-height: 195px; } .account-actions { align-items: flex-end; flex-direction: column; } }
+@media (max-width: 950px) { .admin-layout { grid-template-columns: 220px minmax(0, 1fr); } .control-grid { grid-template-columns: 1fr; } .account-meta { grid-template-columns: 1fr 1fr; } .role-control { grid-template-columns: auto minmax(110px, 1fr); } .role-control .input { grid-column: 1 / -1; } }
+@media (max-width: 720px) { .admin-head { align-items: flex-start; flex-direction: column; } .admin-layout { grid-template-columns: 1fr; } .directory-panel { max-height: 260px; } .user-list { max-height: 195px; } .account-actions { align-items: flex-end; flex-direction: column; } .account-mutation-row { grid-template-columns: 1fr; } .account-mutation-row small { grid-column: auto; } .role-control { grid-template-columns: 1fr; } .role-control .input { grid-column: auto; } .group-delete-control { grid-template-columns: 1fr; } }
 @media (max-width: 500px) { .admin-stats { width: 100%; justify-content: space-between; } .detail-head { align-items: flex-start; flex-direction: column; } .account-actions { align-items: flex-start; } .form-grid, .quota-usage { grid-template-columns: 1fr; } }
 </style>

@@ -1,8 +1,18 @@
-# JARVIS 需求完成度审计（2026-09-22）
+# JARVIS 需求完成度审计（2026-09-23）
 
 本次审计基于 `doc/01_JARVIS金融投研平台_Software Requirement Specification_V1.0.md`、
 `specs/financial-agent-workflow/`、`specs/market-chart-financial-import/` 以及部署文档。
 文档中的视觉稿人工检查项与产品功能验收项分开统计，避免把视觉草图的 checklist 当成后端功能缺陷。
+
+## 2026-09-23 补充审计
+
+- FR-14 管理员账户管理补齐“重置登录状态”：管理员可提交必填原因撤销目标账户所有已签发 JWT；服务端递增 `credential_version`，之后旧 JWT 会被认证过滤器拒绝，且密码不变。管理员不能撤销自己的会话。
+- 管理员账户启停、角色、个人/用户组配额与功能权限、用户组资料/成员/删除操作现在均校验必填操作原因；审计详情记录变更前后摘要。组名/描述、功能和成员摘要均有长度/数量边界。
+- 修复目标用户审计页漏项：除了展示该用户作为操作者的事件，也会展示 `target=user:<id>` 指向该用户的管理员操作；分页上限、去重、时间倒序均保留。
+- 验证：Java 全量 Maven 测试 631 tests / 0 failures / 0 errors / 5 skipped；新增 H2 持久化集成测试覆盖旧 JWT 在撤销前后有效性、凭证版本落库、审计落库及目标用户审计可见性。前端 `npm run test:p0` 为 204 passed，`npm run build` 通过；E2E 类型检查通过，管理员工作区 Mock 浏览器用例 2/2 通过；Python 测试 265 passed。
+- GitHub PR#25（`fix(agent): preserve Java-Python chat role contract`）已于 2026-09-23 合并为 `afa1f8e`；确认 Gitee `main` 原提交 `fc9a965` 是其祖先后，已快进同步 Gitee `main` 至 `afa1f8e`。当前管理端改动分支也已基于该共同基线。
+- 上述变更当前仍在 `codex/admin-session-revocation-audit` 本地工作分支，尚未合并或部署。真实管理员 OAuth/审计浏览器验收仍缺生产管理员凭据，不以 Mock E2E 代替。
+- GitHub 复核没有开放 PR。Gitee PR#19（修正旧日报任务编辑时 `analyze` 默认行为及相应文档/验收用例）代码差异已审查，暂未发现需返修问题；当前无冲突，但指定测试人 `mc_shengxia` 尚未接受，平台 `can_merge_check=false`，因此不能合并。不能把未完成的测试人验收当作合并授权。
 
 ## 本次已补齐
 

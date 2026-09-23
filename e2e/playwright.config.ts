@@ -79,6 +79,11 @@ export default defineConfig({
       use: { ...devices['Desktop Chrome'] },
     },
     {
+      name: 'admin-workspace',
+      testMatch: /admin-workspace\.spec\.ts$/,
+      use: { ...devices['Desktop Chrome'], reducedMotion: 'reduce' as const },
+    },
+    {
       name: 'financial-import',
       testMatch: /financial-import\.spec\.ts$/,
       use: { ...devices['Desktop Chrome'] },

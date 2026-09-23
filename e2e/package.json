@@ -8,6 +8,7 @@
     "test": "playwright test",
     "test:smoke": "playwright test --project=smoke",
     "test:auth": "playwright test --project=auth",
+    "test:admin": "playwright test --project=admin-workspace --workers=1",
     "test:tasks": "playwright test --project=tasks --workers=1",
     "test:visual": "playwright test --project=visual-1600 --project=visual-1280 --project=visual-1024 --project=visual-768 --workers=1",
     "test:visual:update": "playwright test --project=visual-1600 --project=visual-1280 --project=visual-1024 --project=visual-768 --workers=1 --update-snapshots",
