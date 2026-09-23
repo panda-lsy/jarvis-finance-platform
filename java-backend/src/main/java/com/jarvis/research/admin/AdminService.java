@@ -134,15 +134,17 @@ public class AdminService {
     @Transactional
     public Map<String, Object> updateQuota(Long actorId, Long userId, QuotaRequest request, String clientIp) {
         User user = requireUser(userId);
+        String previousQuota = quotaService.findForAdmin(userId)
+                .map(existing -> "dailyRequestLimit:" + existing.getDailyRequestLimit()
+                        + ",monthlyTokenLimit:" + existing.getMonthlyTokenLimit())
+                .orElse("unset");
         AiQuota quota = quotaService.getOrCreateForAdmin(userId);
-        int previousDailyLimit = quota.getDailyRequestLimit();
-        long previousMonthlyLimit = quota.getMonthlyTokenLimit();
         quota.setDailyRequestLimit(request.getDailyRequestLimit());
         quota.setMonthlyTokenLimit(request.getMonthlyTokenLimit());
         quota.setUpdatedAt(LocalDateTime.now());
         quotaService.save(quota);
         auditService.record(actorId, "ADMIN_AI_QUOTA", "user:" + userId, clientIp,
-                "before=dailyRequestLimit:" + previousDailyLimit + ",monthlyTokenLimit:" + previousMonthlyLimit
+                "before=" + previousQuota
                         + "; after=dailyRequestLimit:" + request.getDailyRequestLimit()
                         + ",monthlyTokenLimit:" + request.getMonthlyTokenLimit()
                         + "; reason=" + normalizeReason(request.getReason()));
