@@ -58,12 +58,12 @@ public class AgentOrchestrator {
             emit(sink, AgentEvent.create(
                     "plan_created", "completed", "研究计划已生成", null, question,
                     "新闻、财报、行情、K 线与指标、风险检查与模型汇总", Map.of(
-                            "steps", List.of("新闻摘要", "财报解析", "行情快照", "K 线与技术指标", "风险检查", "AI 研究结论"),
+                            "steps", List.of("个股资讯检索 / 市场新闻", "财报解析", "行情快照", "K 线与技术指标", "风险检查", "AI 研究结论"),
                             "readOnlyTools", toolRegistry.readOnlyTools(), "instrument", instrument.toMap()),
                     Instant.now(), Instant.now(), 0L, null));
 
             checkCancelled(cancelled);
-            Map<String, Object> news = executeNewsTool(sink, cancelled);
+            Map<String, Object> news = executeNewsTool(sink, instrument, cancelled);
             Map<String, Object> filing = executeFinancialReportTool(sink, question, userId, cancelled);
             Map<String, Object> prices = executeQuoteTool(sink, instrument, cancelled);
 
@@ -89,29 +89,70 @@ public class AgentOrchestrator {
         }
     }
 
-    private Map<String, Object> executeNewsTool(Consumer<AgentEvent> sink, BooleanSupplier cancelled) {
+    private Map<String, Object> executeNewsTool(Consumer<AgentEvent> sink,
+                                                AgentResearchContext instrument,
+                                                BooleanSupplier cancelled) {
         Instant started = Instant.now();
-        String stepId = beginStep(sink, "读取市场新闻", "MarketNewsTool", "daily", started);
+        boolean stockResearch = instrument.isEquityMarket();
+        String stepTitle = stockResearch ? "检索个股最新信息" : "读取市场新闻";
+        String toolName = stockResearch ? "StockNewsSearchTool" : "MarketNewsTool";
+        String query = stockResearch
+                ? instrument.name() + " " + instrument.symbol()
+                : "daily";
+        String stepId = beginStep(sink, stepTitle, toolName, query, started);
         try {
             checkCancelled(cancelled);
-            emitStepEvent(sink, AgentEvent.create("tool_call", "running", "读取市场新闻", "MarketNewsTool",
-                    "daily", "读取已缓存的市场新闻摘要", Map.of(), started, null, null, null), stepId);
-            Map<String, Object> raw = aiProxyService.post("/internal/rss/digest?refresh=false&force=false", Map.of());
-            Map<String, Object> news = NewsDigest.fromDigest(raw, 8);
-            emitStepEvent(sink, AgentEvent.create("tool_result", "completed", "市场新闻读取完成", "MarketNewsTool",
-                    "daily", "已取得 " + listSize(news.get("items")) + " 条新闻",
-                    Map.of("available", news.getOrDefault("available", false),
-                            "items", news.getOrDefault("items", List.of()),
-                            "generated_at", news.getOrDefault("generated_at", "")),
+            Map<String, Object> request = stockResearch
+                    ? Map.of("query", query, "limit", 8, "instrument", instrument.toMap())
+                    : Map.of("instrument", instrument.toMap());
+            emitStepEvent(sink, AgentEvent.create("tool_call", "running", stepTitle, toolName,
+                    query, stockResearch ? "按研究标的检索新闻和公告" : "读取已缓存的市场新闻摘要",
+                    request, started, null, null, null), stepId);
+
+            Map<String, Object> news;
+            if (stockResearch) {
+                try {
+                    Map<String, Object> result = aiProxyService.post(
+                            "/internal/research/stock-news", Map.of("query", query, "limit", 8));
+                    if (result == null || !(result.get("items") instanceof List<?>)) {
+                        throw new IllegalStateException("个股搜索服务返回格式不可用");
+                    }
+                    news = new LinkedHashMap<>(result);
+                    news.putIfAbsent("available", true);
+                } catch (Exception searchUnavailable) {
+                    // Java 与 Python 可分批发布；旧版 Python 无此路由时仍可读取原 RSS digest。
+                    Map<String, Object> raw = aiProxyService.post(
+                            "/internal/rss/digest?refresh=false&force=false", Map.of());
+                    news = NewsDigest.fromDigest(raw, 8);
+                    news.put("provider", "rss_digest_compatibility_fallback");
+                }
+            } else {
+                Map<String, Object> raw = aiProxyService.post(
+                        "/internal/rss/digest?refresh=false&force=false", Map.of());
+                news = NewsDigest.fromDigest(raw, 8);
+                news.put("provider", "rss_digest");
+            }
+            Object rawItems = news.get("items");
+            int count = rawItems instanceof List<?> items ? items.size() : 0;
+            Map<String, Object> resultPayload = new LinkedHashMap<>();
+            resultPayload.put("available", news.getOrDefault("available", false));
+            resultPayload.put("provider", news.getOrDefault("provider", "unknown"));
+            resultPayload.put("query", query);
+            resultPayload.put("instrument", instrument.toMap());
+            resultPayload.put("items", rawItems instanceof List<?> ? rawItems : List.of());
+            resultPayload.put("generated_at", news.getOrDefault("generated_at", ""));
+            emitStepEvent(sink, AgentEvent.create("tool_result", "completed", stepTitle + "完成", toolName,
+                    query, "已取得 " + count + " 条相关资讯",
+                    resultPayload,
                     started, Instant.now(), elapsed(started), null), stepId);
-            completeStep(sink, stepId, "市场新闻步骤完成", "MarketNewsTool", "已完成新闻工具调用",
+            completeStep(sink, stepId, stepTitle + "步骤完成", toolName, "已完成新闻工具调用",
                     started, "completed", null);
             return news;
         } catch (AgentCancelledException cancelledException) {
             throw cancelledException;
         } catch (Exception error) {
-            emitToolFailure(sink, "MarketNewsTool", stepId, started, error);
-            completeStep(sink, stepId, "市场新闻步骤失败", "MarketNewsTool", safeMessage(error),
+            emitToolFailure(sink, toolName, stepId, started, error);
+            completeStep(sink, stepId, stepTitle + "步骤失败", toolName, safeMessage(error),
                     started, "failed", "TOOL_FAILED");
             return NewsDigest.unavailable(NewsDigest.REASON_UNAVAILABLE);
         }

@@ -10,7 +10,7 @@ JARVIS Python AI Service
 from fastapi import Body, Depends, FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 
-from . import ai_service, news_semantic
+from . import ai_service, news_semantic, stock_research
 from .ai_routes import require_internal_service, router as ai_router
 from .rss import RSSSourceNotFound, RSSValidationError, rss_store
 
@@ -73,6 +73,16 @@ def rerank_rss(payload: dict = Body(...)):
     if not isinstance(articles, list):
         articles = []
     return news_semantic.rerank_articles(query, articles)
+
+
+@app.post("/internal/research/stock-news", dependencies=[Depends(require_internal_service)])
+def search_stock_news(payload: dict = Body(...)):
+    """检索个股相关新闻；配置 Tavily 时走实时搜索，否则从国内 RSS 缓存降级。"""
+    try:
+        return stock_research.search_stock_news(
+            payload.get("query"), payload.get("limit", 8))
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
 
 
 @app.get("/api/health", dependencies=[Depends(require_internal_service)])

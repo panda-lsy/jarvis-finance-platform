@@ -400,6 +400,10 @@ def test_rss_endpoints_are_registered_and_token_protected():
         dependencies = [d.call for d in route.dependant.dependencies]
         assert require_internal_service in dependencies, f"{path} 缺少内部令牌依赖"
 
+    stock_search = next(route for route in ai_main.app.routes
+                        if getattr(route, "path", "") == "/internal/research/stock-news")
+    assert require_internal_service in [d.call for d in stock_search.dependant.dependencies]
+
 
 def test_add_and_list_sources_through_endpoints():
     """端点函数直接调用：登记后能立刻列出（走模块级单例）。"""

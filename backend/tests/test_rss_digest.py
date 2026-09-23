@@ -61,6 +61,12 @@ def test_default_sources_are_seeded():
         assert source["name"], f"{source['id']} 必须有可读名称"
 
 
+def test_domestic_finance_sources_are_part_of_defaults():
+    ids = {source["id"] for source in RSSStore().list_sources()}
+
+    assert {"china_news_finance", "xinhuanet_finance", "xinhuanet_economy"} <= ids
+
+
 def test_seeding_is_idempotent_and_never_overrides():
     store = RSSStore()
     store.add_source({

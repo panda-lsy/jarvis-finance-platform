@@ -37,6 +37,8 @@ export AI_BASE_URL='<OpenAI-compatible upstream base URL>'
 export AI_MODEL='hy3'
 export AI_MODEL_DISPLAY_NAME='DeepSeek V4 Flash-0731'
 export AI_TIMEOUT='60'
+# 可选：开启 Agent 的个股 Tavily 新闻检索；未配置时自动使用国内 RSS 降级
+export TAVILY_API_KEY='<Tavily API key>'
 
 python -m uvicorn app.main:app --host 127.0.0.1 --port 8100
 ```

@@ -59,6 +59,10 @@ public record AgentResearchContext(String market, String symbol, String name) {
         return Set.of("a_share", "us_stock", "crypto", "global_index").contains(market);
     }
 
+    public boolean isEquityMarket() {
+        return Set.of("a_share", "us_stock").contains(market);
+    }
+
     public boolean supportsExtendedKline() {
         return Set.of("a_share", "us_stock", "crypto", "global_index").contains(market);
     }

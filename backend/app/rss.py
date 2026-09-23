@@ -127,6 +127,27 @@ DEFAULT_SOURCES: List[Dict] = [
         "category": "markets",
         "credibility": 84,
     },
+    {
+        "id": "china_news_finance",
+        "name": "中新网财经",
+        "url": "https://www.chinanews.com.cn/rss/finance.xml",
+        "category": "markets",
+        "credibility": 86,
+    },
+    {
+        "id": "xinhuanet_finance",
+        "name": "新华网金融",
+        "url": "http://www.xinhuanet.com/finance/news_finance.xml",
+        "category": "markets",
+        "credibility": 90,
+    },
+    {
+        "id": "xinhuanet_economy",
+        "name": "新华网财经",
+        "url": "http://www.xinhuanet.com/fortune/news_fortune.xml",
+        "category": "markets",
+        "credibility": 90,
+    },
 ]
 
 

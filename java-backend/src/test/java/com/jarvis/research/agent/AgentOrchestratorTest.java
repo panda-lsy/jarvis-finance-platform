@@ -160,6 +160,9 @@ class AgentOrchestratorTest {
         when(aiProxy.post(startsWith("/internal/rss/digest"), any())).thenReturn(Map.of(
                 "articles", List.of(), "sources", List.of(), "generated_at", "2026-09-21T00:00:00Z",
                 "total_sources", 0, "ok_sources", 0));
+        when(aiProxy.post(eq("/internal/research/stock-news"), any())).thenReturn(Map.of(
+                "available", true, "provider", "tavily",
+                "items", List.of(Map.of("title", "贵州茅台公告", "url", "https://news.example/1"))));
         when(extendedMarketData.quote("a_share", "sh600519"))
                 .thenReturn(Map.of("market", "a_share", "symbol", "sh600519", "price", 1500));
         when(extendedMarketData.kline("a_share", "sh600519", "1d", 60))
@@ -179,6 +182,11 @@ class AgentOrchestratorTest {
         verifyNoInteractions(marketData);
         verify(extendedMarketData).quote("a_share", "sh600519");
         verify(extendedMarketData).kline("a_share", "sh600519", "1d", 60);
+        verify(aiProxy).post(eq("/internal/research/stock-news"),
+                eq(Map.of("query", "贵州茅台 sh600519", "limit", 8)));
+        assertTrue(events.stream().anyMatch(event -> "tool_result".equals(event.type())
+                && "StockNewsSearchTool".equals(event.tool())
+                && "tavily".equals(event.payload().get("provider"))));
         assertTrue(events.stream().anyMatch(event -> "assistant_delta".equals(event.type())
                 && String.valueOf(event.payload().get("content")).contains("贵州茅台")));
         assertTrue(events.stream().filter(event -> "run_started".equals(event.type()))

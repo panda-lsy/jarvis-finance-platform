@@ -11,6 +11,7 @@ public class AgentToolRegistry {
     public List<String> readOnlyTools() {
         return List.of(
                 "MarketNewsTool",
+                "StockNewsSearchTool",
                 "FinancialReportTool",
                 "MarketQuoteTool",
                 "MarketKlineTool",
