@@ -61,7 +61,7 @@ e2e/
     ├── auth.spec.ts          登录与权限
     ├── financial-import.spec.ts 财报解析导入流程
     ├── agent.spec.ts         研究智能体浏览器验收
-    ├── scheduled-tasks.spec.ts  定时任务核心流程（22 条，全打桩）
+    ├── scheduled-tasks.spec.ts  定时任务核心流程（24 条，全打桩）
     ├── task-permission.spec.ts  定时任务写操作的权限置灰（7 条，全打桩）
     └── visual.spec.ts        Market / Research / Chain / Strategy / Execution 视觉回归
 ```

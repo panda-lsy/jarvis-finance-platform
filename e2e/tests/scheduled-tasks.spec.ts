@@ -431,7 +431,7 @@ test.describe('定时任务 · 核心流程', () => {
     ).toHaveValue('3')
     await expect(
       scheduledTasksPage.digestAnalyzeCheckbox,
-      '「AI 分析」默认应为开启（执行器 analyze 缺省即 true）',
+      '「AI 分析」默认应开启（新建表单默认开启并提交 analyze:true）',
     ).toBeChecked()
   })
 
