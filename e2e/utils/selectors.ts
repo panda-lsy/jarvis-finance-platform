@@ -10,9 +10,12 @@ import type { Page } from '@playwright/test'
  *   nav-domain-market            一级域「行情中心」的导航项
  *   risk-alert-detail-chart      风险中心的预警详情图表
  *
- * ── 现状（基线 530cec9）────────────────────────────────────────
- * 前端目前**没有任何 `data-testid`**。因此本套件采用「优先 testid、回退既有选择器」
- * 的双轨查找，让用例在补属性之前也能跑；等 A 线导航改造落地后逐步收敛为单轨。
+ * ── 现状（2026-09-22 核实）──────────────────────────────────────
+ * 前端已**部分**补上 `data-testid`：`pages/ScheduledTasksPage.vue` 有 33 个
+ * （统一前缀 `system-task-`，命名域 `system`），其余页面仍为空。
+ * 因此本套件继续用「优先 testid、回退既有选择器」的双轨查找：
+ * 已补属性的页面可收敛为单轨（见 `pages/ScheduledTasksPage.ts`），
+ * 未补的页面照旧走回退选择器，不需要等谁先改完。
  *
  * ⚠️ 新增 `data-testid` 时只加属性、不要顺带改结构或样式，避免与队友的分支互相冲突。
  */

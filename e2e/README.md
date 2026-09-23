@@ -42,19 +42,27 @@ E2E_MANAGED_SERVER=1 npm test
 
 ```
 e2e/
-├── playwright.config.ts      配置：projects 分 smoke / auth，报告与追踪产物
+├── playwright.config.ts      配置：projects 分 smoke / permissions / auth /
+│                             financial-import / agent / tasks / visual-*（报告与追踪产物）
 ├── fixtures/test.ts          自定义 test，注入各 Page Object
 ├── pages/
 │   ├── BasePage.ts           POM 基类 ← 对外契约（见第 3 节）
 │   ├── LandingPage.ts        官网（iframe 承载）
 │   ├── LoginPage.ts          登录视图
-│   └── WorkspacePage.ts      登录后的工作台外壳
+│   ├── WorkspacePage.ts      登录后的工作台外壳
+│   ├── VisualWorkspacePage.ts 视觉回归专用（档案过场 + 稳定快照）
+│   ├── ScheduledTasksPage.ts  定时任务功能用例（走 data-testid 单轨，见第 4 节）
+│   └── TaskPermissionPage.ts  定时任务权限置灰契约（本页无 testid，走 role + 文案）
 ├── utils/
 │   ├── env.ts                环境变量与三栈地址
 │   └── selectors.ts          data-testid 命名约定 + 回退选择器（见第 4 节）
 └── tests/
     ├── smoke.spec.ts         冒烟：不依赖后端
     ├── auth.spec.ts          登录与权限
+    ├── financial-import.spec.ts 财报解析导入流程
+    ├── agent.spec.ts         研究智能体浏览器验收
+    ├── scheduled-tasks.spec.ts  定时任务核心流程（24 条，全打桩）
+    ├── task-permission.spec.ts  定时任务写操作的权限置灰（7 条，全打桩）
     └── visual.spec.ts        Market / Research / Chain / Strategy / Execution 视觉回归
 ```
 
@@ -131,11 +139,13 @@ risk-alert-detail-chart    风险预警详情图表
 > 六个域即 SRS V1.1 的二级菜单信息架构（A 线会落地 `navConfig.js`），
 > 命名与之一一对应，改造后可直接套用。
 
-**现状与过渡**：截至基线 `530cec9`，前端还没有任何 `data-testid`。
-因此本套件用 `byTestId(id, fallback)` 走双轨；`utils/selectors.ts` 的 `FALLBACK` 表
-记录的是**当前真实存在**的 `id` / `role`（如 `#auth-email`、`[role="alert"]`）。
+**现状与过渡**（2026-09-22 核实）：`data-testid` 已**部分补齐** ——
+`pages/ScheduledTasksPage.vue` 有 33 个（统一前缀 `system-task-`），其余页面仍为空。
+因此本套件用 `byTestId(id, fallback)` 走双轨：**已补属性的页面收敛为单轨**
+（`ScheduledTasksPage.ts`），未补的页面继续走回退选择器。
+`utils/selectors.ts` 的 `FALLBACK` 表记录的是**当前真实存在**的 `id` / `role`
+（如 `#auth-email`、`[role="alert"]`）。
 补 `data-testid` 时**只加属性**，不要顺带改结构或样式，以免与队友分支冲突。
-属性补齐后可逐步去掉 `fallbackSelector` 收敛为单轨。
 
 ---
 

@@ -39,11 +39,13 @@ import java.util.Map;
  * {@code /internal/rss/digest}，数据源与整形规则（{@link NewsDigest}）与页面完全一致，
  * 只是不重复走一遍 HTTP 自调用。</p>
  *
- * <p>已知接口现象（<strong>本次刻意不改</strong>）：Python 侧 {@code /internal/rss/digest}
- * 声明的是 POST + 查询参数，而 {@code NewsController} 与本类都是
- * {@code post(path, Map.of())} 把参数拼在路径里、body 传空。两者行为一致
- * ——Python 会用默认 {@code refresh=True, force=False}，正是日报想要的语义。
- * 若将来 Python 改成从 body 读参数，Controller 与本类需要一起调整。</p>
+ * <p>接口契约（2026-09-22 用 Python 的 {@code /openapi.json} 核实；此前的注释判断<strong>有误</strong>，已更正）：
+ * Python 侧 {@code /internal/rss/digest} 是 POST，而 {@code refresh} / {@code force}
+ * 在 OpenAPI 里声明为 <strong>{@code "in": "query"}</strong>
+ * —— FastAPI 对裸标量参数的默认归属就是查询串。所以本类与 {@code NewsController}
+ * 把参数拼在路径里、body 传空的写法<strong>确实生效</strong>，并非"没传、靠默认值兜住"。
+ * 传的值恰与 Python 声明的默认值 {@code refresh=True, force=False} 相同，故语义正是日报想要的。
+ * 若将来 Python 改成从 body 读参数，Controller 与本类必须一起调整。</p>
  */
 @Slf4j
 @Component
