@@ -353,12 +353,14 @@ public class AgentOrchestrator {
             Map<String, Object> body = new LinkedHashMap<>();
             String groundedQuestion = "当前研究对象是 " + instrument.name() + "（" + instrument.symbol()
                     + "，市场 " + instrument.market() + "）。回答必须明确写出该名称或代码；"
-                    + "不得改答黄金、指数或其他标的。\n\n用户问题：\n" + question;
-            body.put("messages", List.of(
-                    Map.of("role", "system", "content", "只分析 research_context.instrument 指定的单一研究对象。"
-                            + "必须严格区分工具返回的 available 与数据缺口；报价、K线、指标或风险字段缺失/不可用时，"
-                            + "不得编造当前价格、历史走势或指标数值，须明确说明缺失项并仅给出有来源依据的定性分析。"),
-                    Map.of("role", "user", "content", groundedQuestion)));
+                    + "不得改答黄金、指数或其他标的。"
+                    + "只分析 research_context.instrument 指定的单一研究对象；"
+                    + "必须严格区分工具返回的 available 与数据缺口；报价、K线、指标或风险字段缺失/不可用时，"
+                    + "不得编造当前价格、历史走势或指标数值，须明确说明缺失项并仅给出有来源依据的定性分析。"
+                    + "\n\n用户问题：\n" + question;
+            // Python API only accepts client-supplied user/assistant roles. Trusted system
+            // instructions are injected by the Python service from research_context.
+            body.put("messages", List.of(Map.of("role", "user", "content", groundedQuestion)));
             body.put("research_context", context);
             body.put("metrics", metrics);
             String safetyStepId = java.util.UUID.randomUUID().toString();

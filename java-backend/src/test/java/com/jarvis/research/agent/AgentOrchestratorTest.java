@@ -254,7 +254,11 @@ class AgentOrchestratorTest {
         Map<String, Object> body = (Map<String, Object>) bodyCaptor.getValue();
         @SuppressWarnings("unchecked")
         List<Map<String, String>> messages = (List<Map<String, String>>) body.get("messages");
+        assertEquals(1, messages.size());
+        assertEquals("user", messages.get(0).get("role"));
         assertTrue(messages.get(0).get("content").contains("不得编造"));
+        assertTrue(messages.stream().allMatch(message ->
+                "user".equals(message.get("role")) || "assistant".equals(message.get("role"))));
     }
 
     @Test

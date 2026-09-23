@@ -110,6 +110,31 @@ def test_provided_context_is_used_verbatim_without_recomputing(monkeypatch):
     assert "10000.000000" in injected["content"]    # 组合段来自 Java
 
 
+def test_research_context_injects_trusted_instrument_constraints(monkeypatch):
+    forbid_local_recompute(monkeypatch)
+    seen = capture_llm_messages(monkeypatch)
+    research_context = {
+        "instrument": {
+            "key": "sge_gold",
+            "symbol": "Au99.99",
+            "name": "黄金9999",
+            "market": "SGE",
+        }
+    }
+
+    ai_service.chat(
+        MESSAGES,
+        research_context=research_context,
+        metrics=dict(JAVA_CONTEXT),
+    )
+
+    injected = context_message(seen["messages"])
+    assert injected["role"] == "system"
+    assert '"symbol":"Au99.99"' in injected["content"]
+    assert "只分析 research_context.instrument 指定的单一研究对象" in injected["content"]
+    assert "不得编造当前价格、历史走势或指标数值" in injected["content"]
+
+
 def test_provided_context_is_not_mutated(monkeypatch):
     forbid_local_recompute(monkeypatch)
     capture_llm_messages(monkeypatch)

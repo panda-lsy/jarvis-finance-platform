@@ -62,15 +62,31 @@ def _research_context_message(raw_context: Optional[Dict[str, Any]],
     # 所以不能照抄风险面/趋势面那种看 available 的判据。
     provided = metrics if isinstance(metrics, dict) and metrics else None
     calculated = provided if provided is not None else deterministic_context(raw_context)
-    if not calculated:
+    instrument = raw_context.get("instrument") if isinstance(raw_context, dict) else None
+    if not isinstance(instrument, dict) or not instrument:
+        instrument = None
+    if not calculated and instrument is None:
         return None
+
+    context_parts = [
+        "以下是 JARVIS 确定性金融计算层生成的只读研究上下文。",
+        "只分析 research_context.instrument 指定的单一研究对象，不得改答其他标的。"
+        "必须严格区分工具返回的 available 与数据缺口；报价、K线、指标或风险字段缺失/不可用时，"
+        "不得编造当前价格、历史走势或指标数值，须明确说明缺失项并仅给出有来源依据的定性分析。",
+    ]
+    if instrument is not None:
+        context_parts.append(
+            "指定研究对象：\n"
+            + json.dumps(instrument, ensure_ascii=False, separators=(",", ":"))
+        )
+    if calculated:
+        context_parts.append(
+            "确定性数据（请直接引用，不要自行改写数值口径）：\n"
+            + json.dumps(calculated, ensure_ascii=False, separators=(",", ":"))
+        )
     return {
         "role": "system",
-        "content": (
-            "以下是 JARVIS 确定性金融计算层生成的只读研究上下文。"
-            "请直接引用这些数值进行解释，不要自行改写数值口径：\n"
-            + json.dumps(calculated, ensure_ascii=False, separators=(",", ":"))
-        ),
+        "content": "\n".join(context_parts),
     }
 
 
