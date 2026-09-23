@@ -14,7 +14,7 @@
 - 2026-09-23 紧急修复生产 Java→Python 聊天消息角色契约：旧服务把 `role=system` 作为客户端消息发送，违反 Python 仅接受 `user/assistant` 的 schema。PR#25 已让 Java 只发送 `user` 消息，并由 Python 基于可信 `research_context` 注入系统约束；生产原子发布为 `20260923-afa1f8e-agent-fix`（提交 `afa1f8e`），旧 release `20260922-pr24-fc9a965` 保留用于回滚。本次无数据库迁移，Flyway schema 不变。
 - 该生产发布的 Java/Python readiness、公开 smoke（含行情、SSE、回测）通过；随后使用低权限 smoke 账号执行 `CHECK_AGENT_STREAM=1`，真实 Agent SSE 与 PostgreSQL 事件回放均通过，覆盖本次受影响链路。仅后端有改动，前端无需发布。
 - 管理端会话撤销/审计实现已通过 GitHub PR#26 合并，合并提交 `7ef809f`，并于 2026-09-23 部署到生产 release `20260923-7ef809f-admin3`。GitHub Pages 前端部署及 CI 均成功；Java/Python readiness、公网 smoke、Agent SSE 与 PostgreSQL 事件回放通过。本次无数据库迁移；上一 release `20260923-afa1f8e-agent-fix` 保留用于回滚。真实管理员 OAuth/审计浏览器验收仍缺生产管理员凭据，不以 Mock E2E 代替。
-- GitHub 当前无开放 PR。Gitee PR#19（修正旧日报任务编辑时 `analyze` 默认行为及相应文档/验收用例）核心逻辑与执行器的 `Boolean.TRUE.equals(analyze)` 一致，定时任务 Playwright 用例 24/24 通过；复核还修正了文档测试数（22→24）及新建任务默认值的测试说明。PR#20 的管理员功能已与 GitHub PR#26 同步审阅、测试并部署，但 Gitee PR#20 仍需保留独立验收流程。PR#19、PR#20 均无冲突；指定测试人 `mc_shengxia` 尚未接受，平台 `can_merge_check=false`，因此暂不能合并或同步到 Gitee `main`。不能代替测试人确认验收。
+- GitHub 当前无开放 PR。Gitee PR#19（修正旧日报任务编辑时 `analyze` 默认行为及相应文档/验收用例）核心逻辑与执行器的 `Boolean.TRUE.equals(analyze)` 一致，定时任务 Playwright 用例 24/24 通过；复核修正了测试数（22→24）及新建任务默认值说明，提交 `a210ece` 已推送 PR 分支。PR#20 主体管理员功能已由 GitHub PR#26 部署；本次复审发现首次创建用户级配额覆盖时，审计会把刚创建的默认值误记为变更前状态，已修为 `before=unset` 并新增回归测试，提交 `f9c5e4b` 已推送 Gitee PR 分支，但该 follow-up 尚未进入 GitHub `main` 或生产。完整 Java 测试 632 tests / 0 failures / 0 errors / 5 skipped。PR#19、PR#20 均无冲突；指定测试人 `mc_shengxia` 尚未接受，平台 `can_merge_check=false`，因此暂不能合并或同步到 Gitee `main`。不能代替测试人确认验收。
 
 ## 本次已补齐
 
