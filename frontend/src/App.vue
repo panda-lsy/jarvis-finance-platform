@@ -452,7 +452,7 @@ onBeforeUnmount(() => {
       <CommunityPage v-else-if="workspaceRenderRoute === '社区'" />
       <ProfilePage v-else-if="workspaceRenderRoute === '个人中心'" @profile-updated="refreshProfileSession" />
       <section v-else-if="workspaceRenderRoute === '管理后台'" class="panel-wrap">
-        <AdminView />
+        <AdminView :current-user-id="user?.id" />
       </section>
 
       <section v-else-if="workspaceRenderRoute === '运维'" class="panel-wrap">

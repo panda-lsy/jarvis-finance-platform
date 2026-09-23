@@ -78,20 +78,24 @@ public class AdminService {
     }
 
     @Transactional
-    public Map<String, Object> updateStatus(Long actorId, Long userId, boolean enabled, String clientIp) {
+    public Map<String, Object> updateStatus(Long actorId, Long userId, boolean enabled,
+                                            String reason, String clientIp) {
         if (actorId.equals(userId) && !enabled) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "不能禁用当前管理员账号");
         }
         User user = requireUser(userId);
+        boolean beforeEnabled = user.isEnabled();
         user.setEnabled(enabled);
         userRepository.save(user);
         auditService.record(actorId, "ADMIN_USER_STATUS", "user:" + userId, clientIp,
-                "enabled=" + enabled + "; email=" + user.getEmail());
+                "before=enabled:" + beforeEnabled + "; after=enabled:" + enabled
+                        + "; reason=" + normalizeReason(reason));
         return basicUserView(user);
     }
 
     @Transactional
-    public Map<String, Object> updateRole(Long actorId, Long userId, String role, String clientIp) {
+    public Map<String, Object> updateRole(Long actorId, Long userId, String role,
+                                          String reason, String clientIp) {
         User user = requireUser(userId);
         String normalized = role == null ? "" : role.trim().toUpperCase();
         if (!"USER".equals(normalized) && !"ADMIN".equals(normalized)) {
@@ -100,25 +104,48 @@ public class AdminService {
         if (actorId.equals(userId) && !"ADMIN".equals(normalized)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "不能移除当前管理员的管理员权限");
         }
+        String beforeRole = user.getRole();
         user.setRole(normalized);
         userRepository.save(user);
         auditService.record(actorId, "ADMIN_USER_ROLE", "user:" + userId, clientIp,
-                "role=" + normalized + "; email=" + user.getEmail());
+                "before=role:" + beforeRole + "; after=role:" + normalized
+                        + "; reason=" + normalizeReason(reason));
         return basicUserView(user);
+    }
+
+    /** 递增凭证版本，立即撤销目标用户已经签发的所有 JWT，不改动其密码。 */
+    @Transactional
+    public Map<String, Object> revokeSessions(Long actorId, Long userId, String reason, String clientIp) {
+        if (actorId.equals(userId)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "不能重置当前管理员的登录状态");
+        }
+        User user = requireUser(userId);
+        int previousVersion = user.getCredentialVersion();
+        int nextVersion = Math.addExact(previousVersion, 1);
+        user.setCredentialVersion(nextVersion);
+        userRepository.save(user);
+        auditService.record(actorId, "ADMIN_USER_SESSIONS_REVOKE", "user:" + userId, clientIp,
+                "before=credentialVersion:" + previousVersion
+                        + "; after=credentialVersion:" + nextVersion
+                        + "; sessions=revoked; reason=" + normalizeReason(reason));
+        return Map.of("userId", userId, "sessionsRevoked", true);
     }
 
     @Transactional
     public Map<String, Object> updateQuota(Long actorId, Long userId, QuotaRequest request, String clientIp) {
         User user = requireUser(userId);
         AiQuota quota = quotaService.getOrCreateForAdmin(userId);
+        int previousDailyLimit = quota.getDailyRequestLimit();
+        long previousMonthlyLimit = quota.getMonthlyTokenLimit();
         quota.setDailyRequestLimit(request.getDailyRequestLimit());
         quota.setMonthlyTokenLimit(request.getMonthlyTokenLimit());
         quota.setUpdatedAt(LocalDateTime.now());
         quotaService.save(quota);
         auditService.record(actorId, "ADMIN_AI_QUOTA", "user:" + userId, clientIp,
-                "dailyRequestLimit=" + request.getDailyRequestLimit()
-                        + "; monthlyTokenLimit=" + request.getMonthlyTokenLimit()
-                        + "; reason=" + request.getReason());
+                "before=dailyRequestLimit:" + previousDailyLimit + ",monthlyTokenLimit:" + previousMonthlyLimit
+                        + "; after=dailyRequestLimit:" + request.getDailyRequestLimit()
+                        + ",monthlyTokenLimit:" + request.getMonthlyTokenLimit()
+                        + "; reason=" + normalizeReason(request.getReason()));
         return quotaView(user, quota);
     }
 
@@ -131,6 +158,10 @@ public class AdminService {
                 .filter(value -> !value.isBlank())
                 .distinct()
                 .limit(100)
+                .toList();
+        List<String> previousFeatures = permissionRepository.findByUserIdOrderByFeatureKey(userId).stream()
+                .filter(UserFeaturePermission::isEnabled)
+                .map(UserFeaturePermission::getFeatureKey)
                 .toList();
         permissionRepository.deleteByUserId(userId);
         List<UserFeaturePermission> entities = new ArrayList<>();
@@ -145,7 +176,9 @@ public class AdminService {
         }
         permissionRepository.saveAll(entities);
         auditService.record(actorId, "ADMIN_USER_PERMISSIONS", "user:" + userId, clientIp,
-                "features=" + String.join(",", features) + "; reason=" + request.getReason());
+                "before=features:" + summarizeFeatures(previousFeatures)
+                        + "; after=features:" + summarizeFeatures(features)
+                        + "; reason=" + normalizeReason(request.getReason()));
         return fullUserView(user);
     }
 
@@ -174,7 +207,9 @@ public class AdminService {
                 .enabled(true)
                 .build());
         auditService.record(actorId, "ADMIN_GROUP_CREATE", "group:" + group.getId(), clientIp,
-                "name=" + group.getName());
+                "before=absent; after=name:" + auditValue(group.getName())
+                        + ",description:" + auditValue(group.getDescription())
+                        + "; reason=" + normalizeReason(request.getReason()));
         return groupView(group);
     }
 
@@ -183,6 +218,8 @@ public class AdminService {
                                            GroupRequest request, String clientIp) {
         UserGroup group = requireGroup(groupId);
         String name = normalizeGroupName(request.getName());
+        String previousName = group.getName();
+        String previousDescription = group.getDescription();
         groupRepository.findByNameIgnoreCase(name).ifPresent(existing -> {
             if (!Objects.equals(existing.getId(), groupId)) {
                 throw new ResponseStatusException(HttpStatus.CONFLICT, "用户组名称已存在");
@@ -192,15 +229,19 @@ public class AdminService {
         group.setDescription(trimToNull(request.getDescription()));
         groupRepository.save(group);
         auditService.record(actorId, "ADMIN_GROUP_UPDATE", "group:" + groupId, clientIp,
-                "name=" + name);
+                "before=name:" + auditValue(previousName) + ",description:" + auditValue(previousDescription)
+                        + "; after=name:" + auditValue(name) + ",description:" + auditValue(group.getDescription())
+                        + "; reason=" + normalizeReason(request.getReason()));
         return groupView(group);
     }
 
     @Transactional
-    public void deleteGroup(Long actorId, Long groupId, String clientIp) {
+    public void deleteGroup(Long actorId, Long groupId, String reason, String clientIp) {
         UserGroup group = requireGroup(groupId);
+        long memberCount = groupMemberRepository.countByGroupId(groupId);
         auditService.record(actorId, "ADMIN_GROUP_DELETE", "group:" + groupId, clientIp,
-                "name=" + group.getName());
+                "before=name:" + auditValue(group.getName()) + ",enabled:" + group.isEnabled() + ",members:" + memberCount
+                        + "; after=deleted; reason=" + normalizeReason(reason));
         groupRepository.delete(group);
     }
 
@@ -213,6 +254,9 @@ public class AdminService {
                 .distinct()
                 .toList();
         for (Long userId : userIds) requireUser(userId);
+        List<Long> previousUserIds = groupMemberRepository.findByGroupIdOrderByCreatedAtAsc(groupId).stream()
+                .map(UserGroupMember::getUserId)
+                .toList();
         // 一个用户只允许一个策略组；重新分配时从旧组移出，避免多个共享配额叠加。
         groupMemberRepository.deleteByGroupId(groupId);
         for (Long userId : userIds) {
@@ -224,7 +268,9 @@ public class AdminService {
                     .build());
         }
         auditService.record(actorId, "ADMIN_GROUP_MEMBERS", "group:" + groupId, clientIp,
-                "userCount=" + userIds.size() + "; reason=" + request.getReason());
+                "before=users:" + summarizeIds(previousUserIds)
+                        + "; after=users:" + summarizeIds(userIds)
+                        + "; reason=" + normalizeReason(request.getReason()));
         return groupView(group);
     }
 
@@ -232,16 +278,17 @@ public class AdminService {
     public Map<String, Object> updateGroupQuota(Long actorId, Long groupId,
                                                 GroupQuotaRequest request, String clientIp) {
         UserGroup group = requireGroup(groupId);
-        GroupAiQuota quota = groupQuotaRepository.findByGroupId(groupId).orElseGet(() ->
+        var existingQuota = groupQuotaRepository.findByGroupId(groupId);
+        String previousQuota = existingQuota.map(this::quotaSummary).orElse("unset");
+        GroupAiQuota quota = existingQuota.orElseGet(() ->
                 groupQuotaRepository.save(GroupAiQuota.builder().groupId(groupId).build()));
         quota.setDailyRequestLimit(request.getDailyRequestLimit());
         quota.setMonthlyTokenLimit(request.getMonthlyTokenLimit());
         quota.setUpdatedAt(LocalDateTime.now());
         groupQuotaRepository.save(quota);
         auditService.record(actorId, "ADMIN_GROUP_QUOTA", "group:" + groupId, clientIp,
-                "dailyRequestLimit=" + request.getDailyRequestLimit()
-                        + "; monthlyTokenLimit=" + request.getMonthlyTokenLimit()
-                        + "; reason=" + request.getReason());
+                "before=" + previousQuota + "; after=" + quotaSummary(quota)
+                        + "; reason=" + normalizeReason(request.getReason()));
         return groupView(group);
     }
 
@@ -256,6 +303,10 @@ public class AdminService {
                 .distinct()
                 .limit(100)
                 .toList();
+        List<String> previousFeatures = groupPermissionRepository.findByGroupIdOrderByFeatureKey(groupId).stream()
+                .filter(GroupFeaturePermission::isEnabled)
+                .map(GroupFeaturePermission::getFeatureKey)
+                .toList();
         groupPermissionRepository.deleteByGroupId(groupId);
         LocalDateTime now = LocalDateTime.now();
         List<GroupFeaturePermission> entities = features.stream()
@@ -269,7 +320,9 @@ public class AdminService {
                 .toList();
         groupPermissionRepository.saveAll(entities);
         auditService.record(actorId, "ADMIN_GROUP_PERMISSIONS", "group:" + groupId, clientIp,
-                "features=" + String.join(",", features) + "; reason=" + request.getReason());
+                "before=features:" + summarizeFeatures(previousFeatures)
+                        + "; after=features:" + summarizeFeatures(features)
+                        + "; reason=" + normalizeReason(request.getReason()));
         return groupView(group);
     }
 
@@ -383,6 +436,40 @@ public class AdminService {
         out.put("resetDate", quota.getResetDate());
         out.put("periodMonth", quota.getPeriodMonth());
         return out;
+    }
+
+    private String quotaSummary(GroupAiQuota quota) {
+        return "dailyRequestLimit:" + quota.getDailyRequestLimit()
+                + ",monthlyTokenLimit:" + quota.getMonthlyTokenLimit();
+    }
+
+    private String summarizeFeatures(List<String> features) {
+        int shown = Math.min(features.size(), 6);
+        String values = features.subList(0, shown).stream()
+                .map(feature -> auditValue(feature.length() <= 40 ? feature : feature.substring(0, 40) + "…"))
+                .collect(java.util.stream.Collectors.joining(","));
+        return "[" + values + (features.size() > shown ? ",…" : "") + "] (count=" + features.size() + ")";
+    }
+
+    private String summarizeIds(List<Long> ids) {
+        int shown = Math.min(ids.size(), 10);
+        String values = ids.subList(0, shown).stream().map(String::valueOf)
+                .collect(java.util.stream.Collectors.joining(","));
+        return "[" + values + (ids.size() > shown ? ",…" : "") + "] (count=" + ids.size() + ")";
+    }
+
+    private String normalizeReason(String reason) {
+        String normalized = reason == null ? "" : reason.replace('\r', ' ').replace('\n', ' ')
+                .replace(';', ',').trim();
+        if (normalized.isBlank()) throw new IllegalArgumentException("操作原因不能为空");
+        if (normalized.length() > 300) throw new IllegalArgumentException("操作原因不能超过300个字符");
+        return normalized;
+    }
+
+    private String auditValue(String value) {
+        if (value == null || value.isBlank()) return "—";
+        String normalized = value.replace('\r', ' ').replace('\n', ' ').replace(';', ',').trim();
+        return normalized.length() <= 160 ? normalized : normalized.substring(0, 160) + "…";
     }
 
     private String normalizeGroupName(String value) {
