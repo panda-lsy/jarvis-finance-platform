@@ -20,6 +20,7 @@ cd ../frontend && npm run dev
 # 回到 e2e 跑用例
 cd ../e2e
 npm test                      # 全部
+npm run test:ci                # CI 无凭据验收组：smoke、权限、管理后台、财报导入、定时任务
 npm run test:smoke            # 冒烟组：不依赖后端
 npm run test:visual           # 四档 viewport 的工作区视觉回归
 npm run test:visual:update    # 有意更新视觉时刷新基线截图
@@ -171,7 +172,7 @@ risk-alert-detail-chart    风险预警详情图表
    这类环境下要验证工作台需配真实账号。
 2. **注册 / 重置密码链路未覆盖**：两者都依赖邮箱验证码，需要外部邮件通道，不适合放进浏览器 E2E。
 3. **官网是 iframe**：`LandingPage.vue` 内嵌 `/landing/index.html`，断言必须走 `frameLocator`。
-4. **CI 集成尚未开启**：新增 `e2e` job 属于后续任务（待确定门禁强度后接入）。
+4. **CI 验收范围**：`test:ci` 已接入 GitHub Actions，运行不依赖生产账号的浏览器用例；真实用户/管理员登录、真实 Agent 流程和视觉基线仍需对应账号或目标设备单独验收，不能把自动跳过当成通过。
 5. **RSS 相关用例不在本目录**：按分工由信息中心负责人在本套件的 POM 基类之上编写。
 
 ### 视觉回归约定

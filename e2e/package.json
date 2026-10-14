@@ -6,6 +6,7 @@
   "description": "JARVIS 端到端测试（Playwright）。独立于 frontend/，避免 Playwright 依赖污染前端构建产物。",
   "scripts": {
     "test": "playwright test",
+    "test:ci": "playwright test --project=smoke --project=permissions --project=admin-workspace --project=financial-import --project=tasks --workers=1",
     "test:smoke": "playwright test --project=smoke",
     "test:auth": "playwright test --project=auth",
     "test:admin": "playwright test --project=admin-workspace --workers=1",

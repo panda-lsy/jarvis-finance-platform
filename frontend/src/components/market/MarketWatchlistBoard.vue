@@ -324,8 +324,9 @@ watch(() => props.active, active => {
 .watchlist-actions button { height: 30px; padding: 0 10px; border: 1px solid var(--line); border-radius: 7px; background: transparent; color: var(--muted); cursor: pointer; font-size: 9px; }
 .watchlist-actions button:hover:not(:disabled) { color: var(--text); border-color: var(--line-strong); background: var(--workspace-hover-bg); }
 .watchlist-actions button:disabled { opacity: .45; cursor: default; }
-.code-add { display: flex; align-items: center; gap: 5px; }
-.code-add input { width: 238px; height: 30px; padding: 0 9px; border: 1px solid var(--line); border-radius: 7px; outline: none; background: var(--workspace-control-bg, transparent); color: var(--text); font-size: 9px; }
+.code-add { display: flex; align-items: center; gap: 5px; min-width: 0; }
+.code-add input { flex: 1 1 auto; min-width: 0; width: 238px; height: 30px; padding: 0 9px; border: 1px solid var(--line); border-radius: 7px; outline: none; background: var(--workspace-control-bg, transparent); color: var(--text); font-size: 9px; }
+.code-add button { flex: 0 0 auto; min-width: 56px; white-space: nowrap; }
 .code-add input:focus { border-color: var(--workspace-focus, var(--accent)); }
 .file-input { display: none; }
 .import-message { margin: 10px 0 0; color: var(--accent-strong); font-size: 9px; }
