@@ -26,7 +26,7 @@ smoke、auth、visual、financial-import 以及 e2e/playwright.config.ts 中定�
 }
 
 function parseArgs(argv) {
-  const args = { prd: 'doc/DeepSeek大模型金融投研系统-PRD.md', output: '.test-agent/latest', run: false, project: 'smoke', maxCases: 80, baseUrl: '' }
+  const args = { prd: 'specs/financial-agent-workflow/requirements.md', output: '.test-agent/latest', run: false, project: 'smoke', maxCases: 80, baseUrl: '' }
   for (let i = 2; i < argv.length; i += 1) {
     const value = argv[i]
     if (value === '--help' || value === '-h') { usage(); process.exit(0) }

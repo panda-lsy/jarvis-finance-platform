@@ -4,7 +4,7 @@
 
 ```powershell
 # 只读 PRD 并生成用例/报告，不启动浏览器
-node tools/test-agent/test-agent.mjs --prd doc/DeepSeek大模型金融投研系统-PRD.md
+node tools/test-agent/test-agent.mjs --prd specs/financial-agent-workflow/requirements.md
 
 # 在已启动前端的环境执行 smoke，并将结果合并到报告
 node tools/test-agent/test-agent.mjs --run --project smoke --base-url https://f.shengxia.me

@@ -51,7 +51,7 @@ Cloudflare → Nginx
 ├── java-backend/             # Spring Boot 3 Java 业务后端
 ├── backend/                  # FastAPI 内部 AI 服务
 ├── deploy/                   # 生产发布、Nginx、systemd、备份与监控
-├── doc/                      # 需求、SRS、架构和项目文档
+├── specs/                    # 当前功能需求、设计与实施计划
 ├── mobile/                   # React Native / Expo 移动端
 ├── .github/workflows/        # CI 与前端备用构建工作流
 ├── config/                   # 应用配置和模板
@@ -183,11 +183,12 @@ sudo bash deploy/scripts/promote-release.sh \
 
 ## 相关文档
 
-- [`doc/`](doc/)：需求文档、SRS、架构图及项目资料
+- [`specs/`](specs/)：当前功能需求、设计说明和实施计划
 - [`frontend/README.md`](frontend/README.md)：前端开发与安全边界
 - [`java-backend/README.md`](java-backend/README.md)：Java API、认证、交易和测试
 - [`backend/README.md`](backend/README.md)：内部 AI 服务
 - [`deploy/README.md`](deploy/README.md)：生产部署、备份、监控和回滚
+- [`tools/test-agent/README.md`](tools/test-agent/README.md)：需求驱动的浏览器验收辅助工具
 - [`deploy/monitoring/grafana/README.md`](deploy/monitoring/grafana/README.md)：Grafana 配置
 
 ## 安全边界
